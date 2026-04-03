@@ -1,15 +1,25 @@
-# AI SDLC - Implementation Stories
+# AI SDLC - Implementation Epics & Stories
 
-**Epic:** AI SDLC Framework for Analytical Data Products  
 **Project:** SCRUM  
 **Created:** 2026-04-03  
 **Source Document:** `AI_SDLC_Plan.md`
 
-> These stories are implementation-ready. Each contains enough context for an AI agent (Claude Code) or developer to pick up and deliver independently. Stories are ordered by dependency — earlier stories unblock later ones.
+> Each phase is a **Jira Epic**. Stories within each epic are implementation-ready — an AI agent (Claude Code) or developer can pick up any story and deliver it independently. Epics are ordered by dependency; earlier epics unblock later ones.
+
+| # | Epic | Stories | Deliverable |
+|---|------|---------|-------------|
+| 1 | Foundation & Guardrails | 1-4 | Bootstrappable project template, config schema, hook scripts |
+| 2 | Claude Code Skills | 5-13 | All 9 skills functional as slash commands |
+| 3 | Code Templates | 14-16 | PySpark + Python/Pandas + common templates |
+| 4 | Subagents | 17-22 | All 6 agents wired to skills and MCP |
+| 5 | Terraform Modules | 23-27 | Full IaC layer for all 4 engines |
+| 6 | CI/CD Pipeline | 28-29 | Jenkins build + Harness deploy pipelines |
+| 7 | Testing & Scripts | 30-31 | Utility scripts + pytest framework |
+| 8 | Governance & Documentation | 32-33 | Data contracts, lineage, Global CLAUDE.md |
 
 ---
 
-## Phase 1: Foundation (Project Template & Config)
+## Epic 1: Foundation & Guardrails
 
 ### Story 1: Scaffold the Standardized Project Template
 
@@ -90,9 +100,44 @@
 
 ---
 
-## Phase 2: Claude Code Skills
+### Story 4: Implement All Hook Scripts
 
-### Story 4: Implement `/validate-config` Skill
+**Summary:** Create the 5 hook shell scripts that enforce guardrails at each SDLC stage, plus register them in `.claude/settings.json`.
+
+**Acceptance Criteria:**
+- [ ] All hooks follow Claude Code standard: read JSON from stdin, write errors to stderr, use exit 2 to block, exit 0 to allow
+- [ ] `hooks/pre-config-validation.sh`:
+  - Fires on: `PreToolUse` → `Write|Edit` (YAML files)
+  - Checks for Snowflake write operations (INSERT INTO, MERGE INTO, UPDATE, DELETE FROM, CREATE TABLE)
+  - Blocks with exit 2 if found
+- [ ] `hooks/pre-deploy-terraform-plan.sh`:
+  - Fires on: `PreToolUse` → `Bash(terraform apply*)`
+  - Runs `terraform init` + `terraform plan -detailed-exitcode`
+  - Blocks if plan fails or includes resource destruction
+- [ ] `hooks/post-codegen-lint.sh`:
+  - Fires on: `PostToolUse` → `Write|Edit` (.py files)
+  - Runs `flake8` (max-line-length=120) and `bandit` (security scan)
+  - Reports failures to stderr (PostToolUse hooks are advisory, cannot block)
+- [ ] `hooks/post-codegen-docker-lint.sh`:
+  - Fires on: `PostToolUse` → `Write|Edit` (Dockerfile)
+  - Runs `hadolint` if installed
+  - Graceful skip if hadolint not available
+- [ ] `hooks/post-deploy-recon.sh`:
+  - Fires on: `Stop` event
+  - Invokes reconciliation Lambda via `aws lambda invoke`
+  - Blocks if reconciliation fails
+- [ ] All hooks registered in `.claude/settings.json` under `PreToolUse`, `PostToolUse`, and `Stop` events with appropriate matchers and timeouts
+
+**Technical Context:**
+- Full hook implementations: `AI_SDLC_Plan.md` Section 2.4 (lines ~740-901)
+- Hook registration in settings.json: Section 2.4 (lines ~910-973)
+- Hook blocking behavior: Section 2.4 (lines ~986-992)
+
+---
+
+## Epic 2: Claude Code Skills
+
+### Story 5: Implement `/validate-config` Skill
 
 **Summary:** Create the SKILL.md and supporting validation logic for the `/validate-config` slash command.
 
@@ -117,7 +162,7 @@
 
 ---
 
-### Story 5: Implement `/validate-connection` Skill
+### Story 6: Implement `/validate-connection` Skill
 
 **Summary:** Create the SKILL.md for the `/validate-connection` slash command that validates Snowflake connection configuration.
 
@@ -142,7 +187,7 @@
 
 ---
 
-### Story 6: Implement `/generate-pipeline` Orchestrator Skill
+### Story 7: Implement `/generate-pipeline` Orchestrator Skill
 
 **Summary:** Create the SKILL.md for the `/generate-pipeline` orchestrator that reads `compute.engine` from config and delegates to the appropriate engine-specific skill.
 
@@ -170,7 +215,7 @@
 
 ---
 
-### Story 7: Implement `/generate-emr-pipeline` Skill
+### Story 8: Implement `/generate-emr-pipeline` Skill
 
 **Summary:** Create the SKILL.md for the `/generate-emr-pipeline` skill that generates PySpark jobs for EMR (Serverless or EC2).
 
@@ -195,7 +240,7 @@
 
 ---
 
-### Story 8: Implement `/generate-lambda-pipeline` Skill
+### Story 9: Implement `/generate-lambda-pipeline` Skill
 
 **Summary:** Create the SKILL.md for the `/generate-lambda-pipeline` skill that generates Python+Pandas Lambda handlers.
 
@@ -222,7 +267,7 @@
 
 ---
 
-### Story 9: Implement `/generate-ecs-pipeline` Skill
+### Story 10: Implement `/generate-ecs-pipeline` Skill
 
 **Summary:** Create the SKILL.md for the `/generate-ecs-pipeline` skill that generates Python+Pandas ECS Fargate tasks with Dockerfile.
 
@@ -251,7 +296,7 @@
 
 ---
 
-### Story 10: Implement `/generate-step-function` Skill
+### Story 11: Implement `/generate-step-function` Skill
 
 **Summary:** Create the SKILL.md for the `/generate-step-function` skill that generates AWS Step Function state machine definitions (ASL JSON).
 
@@ -276,7 +321,7 @@
 
 ---
 
-### Story 11: Implement `/generate-terraform` Skill
+### Story 12: Implement `/generate-terraform` Skill
 
 **Summary:** Create the SKILL.md for the `/generate-terraform` skill that generates Terraform modules for infrastructure provisioning.
 
@@ -306,7 +351,7 @@
 
 ---
 
-### Story 12: Implement `/run-recon` Skill
+### Story 13: Implement `/run-recon` Skill
 
 **Summary:** Create the SKILL.md for the `/run-recon` skill that generates reconciliation checks.
 
@@ -328,9 +373,9 @@
 
 ---
 
-## Phase 3: Code Templates
+## Epic 3: Code Templates
 
-### Story 13: Create PySpark Templates (Glue + EMR)
+### Story 14: Create PySpark Templates (Glue + EMR)
 
 **Summary:** Implement the PySpark code templates shared by Glue and EMR engines.
 
@@ -367,7 +412,7 @@
 
 ---
 
-### Story 14: Create Python/Pandas Templates (Lambda + ECS)
+### Story 15: Create Python/Pandas Templates (Lambda + ECS)
 
 **Summary:** Implement the Python+Pandas code templates shared by Lambda and ECS engines.
 
@@ -409,7 +454,7 @@
 
 ---
 
-### Story 15: Create Common Templates (Reconciliation + Data Quality)
+### Story 16: Create Common Templates (Reconciliation + Data Quality)
 
 **Summary:** Implement the shared reconciliation and data quality templates used by all compute engines.
 
@@ -432,9 +477,9 @@
 
 ---
 
-## Phase 4: Subagents
+## Epic 4: Subagents
 
-### Story 16: Implement Requirement Parser Agent
+### Story 17: Implement Requirement Parser Agent
 
 **Summary:** Create the AGENT.md for the Requirement Parser subagent that reads Jira tickets via MCP and extracts structured requirements.
 
@@ -457,7 +502,7 @@
 
 ---
 
-### Story 17: Implement Spec Generator Agent
+### Story 18: Implement Spec Generator Agent
 
 **Summary:** Create the AGENT.md for the Spec Generator subagent that produces technical specifications and publishes to Confluence.
 
@@ -481,7 +526,7 @@
 
 ---
 
-### Story 18: Implement Config Generator Agent
+### Story 19: Implement Config Generator Agent
 
 **Summary:** Create the AGENT.md for the Config Generator subagent that produces validated pipeline config YAML from technical specs.
 
@@ -504,7 +549,7 @@
 
 ---
 
-### Story 19: Implement Pipeline Generator Agent
+### Story 20: Implement Pipeline Generator Agent
 
 **Summary:** Create the AGENT.md for the Pipeline Generator subagent that generates ETL code from config.
 
@@ -529,7 +574,7 @@
 
 ---
 
-### Story 20: Implement Infra Agent
+### Story 21: Implement Infra Agent
 
 **Summary:** Create the AGENT.md for the Infra Agent subagent that generates and applies Terraform.
 
@@ -553,7 +598,7 @@
 
 ---
 
-### Story 21: Implement QA Agent
+### Story 22: Implement QA Agent
 
 **Summary:** Create the AGENT.md for the QA Agent subagent that runs reconciliation and data quality checks.
 
@@ -578,43 +623,7 @@
 
 ---
 
-## Phase 5: Hooks & Guardrails
-
-### Story 22: Implement All Hook Scripts
-
-**Summary:** Create the 5 hook shell scripts that enforce guardrails at each SDLC stage.
-
-**Acceptance Criteria:**
-- [ ] All hooks follow Claude Code standard: read JSON from stdin, write errors to stderr, use exit 2 to block, exit 0 to allow
-- [ ] `hooks/pre-config-validation.sh`:
-  - Fires on: `PreToolUse` → `Write|Edit` (YAML files)
-  - Checks for Snowflake write operations (INSERT INTO, MERGE INTO, UPDATE, DELETE FROM, CREATE TABLE)
-  - Blocks with exit 2 if found
-- [ ] `hooks/pre-deploy-terraform-plan.sh`:
-  - Fires on: `PreToolUse` → `Bash(terraform apply*)`
-  - Runs `terraform init` + `terraform plan -detailed-exitcode`
-  - Blocks if plan fails or includes resource destruction
-- [ ] `hooks/post-codegen-lint.sh`:
-  - Fires on: `PostToolUse` → `Write|Edit` (.py files)
-  - Runs `flake8` (max-line-length=120) and `bandit` (security scan)
-  - Reports failures to stderr (PostToolUse hooks are advisory, cannot block)
-- [ ] `hooks/post-codegen-docker-lint.sh`:
-  - Fires on: `PostToolUse` → `Write|Edit` (Dockerfile)
-  - Runs `hadolint` if installed
-  - Graceful skip if hadolint not available
-- [ ] `hooks/post-deploy-recon.sh`:
-  - Fires on: `Stop` event
-  - Invokes reconciliation Lambda via `aws lambda invoke`
-  - Blocks if reconciliation fails
-
-**Technical Context:**
-- Full hook implementations: `AI_SDLC_Plan.md` Section 2.4 (lines ~740-901)
-- Hook registration in settings.json: Section 2.4 (lines ~910-973)
-- Hook blocking behavior: Section 2.4 (lines ~986-992)
-
----
-
-## Phase 6: Terraform Modules
+## Epic 5: Terraform Modules
 
 ### Story 23: Implement Glue Job Terraform Module
 
@@ -724,7 +733,7 @@
 
 ---
 
-## Phase 7: CI/CD Pipeline
+## Epic 6: CI/CD Pipeline
 
 ### Story 28: Create Jenkins CI Pipeline (Jenkinsfile)
 
@@ -768,7 +777,7 @@
 
 ---
 
-## Phase 8: Testing & Scripts
+## Epic 7: Testing & Scripts
 
 ### Story 30: Create Utility Scripts
 
@@ -796,7 +805,7 @@
 
 ---
 
-## Phase 9: Governance & Documentation
+## Epic 8: Governance & Documentation
 
 ### Story 32: Implement Data Contracts and Lineage
 
@@ -833,18 +842,26 @@
 
 ---
 
-## Story Dependency Map
+## Epic Dependency Map
 
 ```
-Phase 1 (Foundation):     Story 1 → Story 2 → Story 3
-Phase 2 (Skills):         Story 4, 5 (parallel) → Story 6 → Stories 7, 8, 9 (parallel) → Stories 10, 11, 12 (parallel)
-Phase 3 (Templates):      Stories 13, 14, 15 (parallel, but after Phase 2 skills)
-Phase 4 (Agents):         Story 16 → Story 17 → Story 18 → Story 19 → Story 20 → Story 21
-Phase 5 (Hooks):          Story 22 (after Story 1)
-Phase 6 (Terraform):      Stories 23, 24, 25 (parallel) → Story 26 → Story 27
-Phase 7 (CI/CD):          Story 28, 29 (parallel, after Phase 6)
-Phase 8 (Testing):        Story 30, 31 (parallel, after Phase 3 + Phase 6)
-Phase 9 (Governance):     Story 32, 33 (after all phases)
+Epic 1 (Foundation):      Story 1 → Story 2 → Story 3 → Story 4
+Epic 2 (Skills):          Story 5, 6 (parallel) → Story 7 → Stories 8, 9, 10 (parallel) → Stories 11, 12, 13 (parallel)
+Epic 3 (Templates):       Stories 14, 15, 16 (parallel, after Epic 2)
+Epic 4 (Agents):          Story 17 → Story 18 → Story 19 → Story 20 → Story 21 → Story 22
+Epic 5 (Terraform):       Stories 23, 24, 25 (parallel) → Story 26 → Story 27
+Epic 6 (CI/CD):           Story 28, 29 (parallel, after Epic 5)
+Epic 7 (Testing):         Story 30, 31 (parallel, after Epic 3 + Epic 5)
+Epic 8 (Governance):      Story 32, 33 (after all epics)
 ```
 
-**Critical path:** Story 1 → Story 2 → Story 4/5 → Story 6 → Story 7/8/9 → Story 13/14 → Story 19 → Story 28
+**Inter-epic dependencies:**
+- Epic 2 requires Epic 1 (skills need project scaffold + schema)
+- Epic 3 requires Epic 2 (templates are referenced by skills)
+- Epic 4 requires Epic 2 + Epic 3 (agents invoke skills and use templates)
+- Epic 5 can start in parallel with Epic 2 (independent Terraform work)
+- Epic 6 requires Epic 5 (CI/CD deploys Terraform)
+- Epic 7 requires Epic 3 + Epic 5 (tests validate templates + infra)
+- Epic 8 requires all other epics
+
+**Critical path:** Story 1 → Story 2 → Story 5/6 → Story 7 → Story 8/9/10 → Story 14/15 → Story 20 → Story 28
