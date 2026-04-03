@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__atlassian__getJiraIssue",
+      "mcp__atlassian__getAccessibleAtlassianResources",
+      "WebSearch",
+      "Bash(gh pr create --title 'SCRUM-4: AI SDLC plan for Analytical Data Products' --body ':*)",
+      "Bash(where gh:*)",
+      "mcp__github__create_pull_request",
+      "Bash(yaml\" \"C:\\\\Projects\\\\AI SDLC\\\\AnalyticalDataProduct\\\\AI_SDLC_Plan.md\" | head -5)",
+      "Bash(grep -n \"^```yaml\" \"C:\\\\Projects\\\\AI SDLC\\\\AnalyticalDataProduct\\\\AI_SDLC_Plan.md\" | head -5)"
+    ]
+  }
+}
