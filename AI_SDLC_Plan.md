@@ -54,7 +54,7 @@ guardrails at every stage.
 | 1 | **Intake** | Jira ticket (SCRUM-4 style) | Parsed requirement object | Requirement Parser Agent |
 | 2 | **Spec** | Parsed requirements | Technical specification (Confluence page + JSON) | Spec Generator Agent |
 | 3 | **Config** | Technical specification | Pipeline config YAML | Config Generator Agent |
-| 4 | **Code Generate** | Pipeline config YAML | PySpark jobs, Lambdas, Step Function definitions, Terraform | Pipeline Generator Agent |
+| 4 | **Code Generate** | Pipeline config YAML | ETL code (PySpark or Python), Lambdas, Step Function definitions, Terraform | Pipeline Generator Agent |
 | 5 | **Build** | Generated code artifacts | Tested, packaged artifacts | CI/CD Orchestrator (Jenkins/Harness) |
 | 6 | **Deploy** | Packaged artifacts + Terraform | Running infrastructure + pipeline | Infra Agent |
 | 7 | **Validate** | Deployed pipeline | Reconciliation report, data quality results | QA Agent |
@@ -126,10 +126,43 @@ You are an AI SDLC agent building Analytical Data Products in a Data Mesh on AWS
 - Only two MCP servers are available: JIRA MCP and Confluence MCP. Do not assume
   access to any other MCP servers (no GitHub MCP, no Slack MCP, etc.).
 - Each producer has a separate AWS account. Never hardcode account IDs.
-- All PySpark code must be compatible with AWS Glue 4.0 (Spark 3.3+).
 - Terraform must be used for ALL infrastructure. No ClickOps, no CloudFormation.
 - CI/CD pipelines use Jenkins for builds and Harness for deployments. Jules is the
   AI-assisted code review layer.
+
+## Supported Compute Engines
+Four compute engines are supported. The `compute.engine` field in the pipeline config
+determines which engine is used. Each has specific constraints:
+
+### Glue (PySpark)
+- All PySpark code must be compatible with AWS Glue 4.0 (Spark 3.3+).
+- Use GlueContext and Job API for job lifecycle (init/commit).
+- Worker types: G.1X, G.2X, G.4X, G.8X, Z.2X.
+- Best for: most analytical data products, managed Spark, no cluster management.
+
+### EMR (PySpark)
+- Use EMR Serverless (preferred) or EMR on EC2 for large-scale jobs.
+- EMR release must be emr-6.15.0+ (Spark 3.4+, Iceberg 1.3+).
+- Do NOT use GlueContext -- use plain SparkSession for EMR jobs.
+- EMR Serverless: specify application ID, not cluster ID.
+- Best for: very large datasets, custom Spark tuning, long-running jobs.
+
+### Lambda (Python + Pandas)
+- Python 3.11+ runtime only.
+- Hard limit: 15-minute timeout, 10 GB memory maximum.
+- Use ONLY for datasets that fit in memory (< 500 MB recommended).
+- Use `snowflake-connector-python` (not Spark connector) for Snowflake reads.
+- Use `pyiceberg` library for Iceberg writes (not Spark).
+- Package dependencies as Lambda layers or container images.
+- Best for: small datasets, event-driven triggers, lightweight transforms.
+
+### ECS Fargate (Python + Pandas)
+- Use the same Python + Pandas code pattern as Lambda (shared templates).
+- No timeout limit (unlike Lambda). Suitable for medium-to-large datasets.
+- Container images must use the corporate base image from ECR.
+- Include health check endpoints in all ECS tasks.
+- Dockerfile must pass hadolint linting.
+- Best for: medium datasets, long-running Python jobs, teams without Spark expertise.
 
 ## Naming Conventions
 - S3 paths: s3://{account_alias}-adp-{env}/{domain}/{product_name}/
@@ -137,11 +170,17 @@ You are an AI SDLC agent building Analytical Data Products in a Data Mesh on AWS
 - Iceberg tables: {domain}_{product_name}_{env}.{table_name}
 - Step Functions: adp-{domain}-{product_name}-{env}
 - Glue Jobs: adp-{domain}-{product_name}-{job_name}-{env}
+- EMR Applications: adp-{domain}-{product_name}-emr-{env}
+- Lambda Functions: adp-{domain}-{product_name}-{function_name}-{env}
+- ECS Tasks: adp-{domain}-{product_name}-ecs-{env}
+- ECR Repositories: adp/{domain}/{product_name}
 
 ## Code Standards
-- PySpark jobs must include structured logging with correlation IDs.
-- All SQL must be parameterized (no string interpolation for table/column names in
-  production queries -- use Spark catalog references).
+- All ETL code must include structured logging with correlation IDs.
+- PySpark jobs (Glue/EMR): All SQL must be parameterized (no string interpolation
+  for table/column names -- use Spark catalog references).
+- Python jobs (Lambda/ECS): Use parameterized queries with snowflake-connector-python.
+  Never use f-strings for SQL construction.
 - Every generated pipeline must include reconciliation checks comparing source row
   counts and aggregate sums against the target Iceberg table.
 ```
@@ -163,10 +202,14 @@ Each analytical data product repository has its own CLAUDE.md with product-speci
 See Section 8 of this document for the standardized template.
 
 ## Skills Available (in .claude/skills/)
-- /generate-pipeline: Creates PySpark Glue job from config
+- /generate-pipeline: Orchestrator -- reads compute.engine from config, delegates to engine-specific skill
+- /generate-emr-pipeline: Creates PySpark EMR job from config (no GlueContext)
+- /generate-lambda-pipeline: Creates Python+Pandas Lambda handler from config
+- /generate-ecs-pipeline: Creates Python+Pandas ECS entrypoint + Dockerfile from config
 - /generate-step-function: Creates Step Function ASL from config
 - /generate-terraform: Creates Terraform modules for this product
 - /validate-config: Validates pipeline config YAML against schema
+- /validate-connection: Validates Snowflake connection config (OAuth, proxy, read-only)
 - /run-recon: Generates reconciliation query set
 
 ## Domain-Specific Rules
@@ -195,7 +238,7 @@ They can accept arguments via `$ARGUMENTS` or `$0`, `$1` positional placeholders
 ```markdown
 ---
 name: generate-pipeline
-description: Generates a PySpark Glue job from a pipeline configuration YAML file. Use when the user wants to create or regenerate ETL code from a config.
+description: Orchestrator skill that reads compute.engine from the pipeline config and delegates to the appropriate engine-specific skill. Use when the user wants to create or regenerate ETL code from a config.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -203,7 +246,8 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-pipeline
 
 ## Description
-Generates a PySpark Glue job from a pipeline configuration YAML file.
+Orchestrator that reads the pipeline config, determines the compute engine, and delegates
+to the appropriate engine-specific skill.
 
 ## Inputs
 - Pipeline config YAML (path: $ARGUMENTS, or read from configs/)
@@ -211,32 +255,24 @@ Generates a PySpark Glue job from a pipeline configuration YAML file.
 ## Steps
 1. Read the pipeline config YAML.
 2. Validate the config against the schema (invoke /validate-config first).
-3. For each source dataset in the config:
-   a. Generate the Snowflake read block (OAuth + proxy).
-   b. Apply any source-level filters.
-4. For each join defined in the config:
-   a. Generate the PySpark join statement with the specified join type and keys.
-5. For each transformation:
-   a. If SQL-based, wrap in spark.sql().
-   b. If PySpark-based, generate the DataFrame API chain.
-6. For each aggregation:
-   a. Generate the groupBy + agg chain.
-7. Generate the Iceberg write block:
-   a. Use Glue Catalog as the Iceberg catalog.
-   b. Set write mode (append/overwrite) per config.
-   c. Include partition spec if defined.
-8. Wrap everything in the Glue job boilerplate (GlueContext, SparkSession, job.init/commit).
-9. Add structured logging, error handling, and reconciliation calls.
-10. Write output to pipelines/{product_name}/glue_jobs/{job_name}.py.
-
-## Templates Used
-- templates/glue_job_boilerplate.py
-- templates/snowflake_reader.py
-- templates/iceberg_writer.py
-- templates/reconciliation.py
+3. Validate the Snowflake connection (invoke /validate-connection).
+4. Read `compute.engine` from the config.
+5. Delegate to the engine-specific skill:
+   - `glue` → Generate PySpark Glue job (inline -- this is the default path):
+     a. For each source, generate Snowflake read block (Spark connector, OAuth + proxy).
+     b. Generate joins, transformations, aggregations using PySpark DataFrame API.
+     c. Generate Iceberg write block via Glue Catalog.
+     d. Wrap in Glue job boilerplate (GlueContext, job.init/commit).
+     e. Templates: `templates/pyspark/glue_job_boilerplate.py`, `templates/pyspark/snowflake_reader_spark.py`, `templates/pyspark/iceberg_writer_spark.py`
+     f. Output: `pipelines/{product_name}/glue_jobs/{job_name}.py`
+   - `emr` → Invoke /generate-emr-pipeline
+   - `lambda` → Invoke /generate-lambda-pipeline
+   - `ecs` → Invoke /generate-ecs-pipeline
+6. Invoke /generate-step-function to create the orchestration ASL (adapts resource type per engine).
+7. Add structured logging, error handling, and reconciliation calls.
 
 ## Output
-- Generated PySpark file at the specified path.
+- Generated ETL code at the engine-appropriate path.
 ```
 
 #### Skill: `validate-config`
@@ -373,6 +409,178 @@ Generates reconciliation SQL/PySpark checks based on the reconciliation section 
 - Reconciliation module at pipelines/{product_name}/recon/{product_name}_recon.py.
 ```
 
+#### Skill: `validate-connection`
+
+**File:** `.claude/skills/validate-connection/SKILL.md`
+
+```markdown
+---
+name: validate-connection
+description: Validates Snowflake connection configuration before pipeline generation. Checks OAuth, proxy, role, and account settings. Use before code generation or when connection config changes.
+argument-hint: "[config-path]"
+allowed-tools: Read Grep Bash
+---
+
+# Skill: validate-connection
+
+## Description
+Validates Snowflake connection configuration to catch misconfigurations before runtime.
+
+## Checks
+1. Each source has `authenticator: oauth` (no password or keypair auth).
+2. Both `http_proxy` and `https_proxy` are set and non-empty.
+3. Proxy URL matches the corporate pattern (http://corporate-proxy.company.com:*).
+4. Account URL format is valid ({account}.{region} pattern).
+5. Role name follows naming convention (ends with `_READER_ROLE` or `_READ_ROLE`).
+6. No write-implying role names (e.g., `_WRITER`, `_ADMIN`, `_OWNER`).
+7. Warehouse is specified and non-empty.
+8. The Secrets Manager path `adp/snowflake/{account}/oauth` is referenced correctly.
+
+## Output
+- Validation result: PASS or FAIL with list of errors.
+```
+
+#### Skill: `generate-emr-pipeline`
+
+**File:** `.claude/skills/generate-emr-pipeline/SKILL.md`
+
+```markdown
+---
+name: generate-emr-pipeline
+description: Generates a PySpark job for EMR (Serverless or EC2) from a pipeline config. Uses plain SparkSession without GlueContext. Use when compute.engine is emr.
+argument-hint: "[config-path]"
+allowed-tools: Read Grep Glob Write Bash
+---
+
+# Skill: generate-emr-pipeline
+
+## Description
+Generates a PySpark ETL job for EMR, using SparkSession directly (no GlueContext).
+
+## Key Differences from Glue
+- No GlueContext, no job.init/commit -- uses plain SparkSession.
+- Iceberg catalog configured via Spark conf (same catalog settings).
+- Script packaged as a standalone .py file submitted via EMR step or EMR Serverless job run.
+- Entry point uses `if __name__ == "__main__"` pattern (not Glue's getResolvedOptions).
+- Arguments parsed via argparse instead of getResolvedOptions.
+
+## Steps
+1. Read the pipeline config YAML.
+2. Generate SparkSession with Iceberg catalog configuration.
+3. For each source: generate Snowflake read block (same Spark connector, OAuth + proxy).
+4. Generate joins, transformations, aggregations using PySpark DataFrame API.
+5. Generate Iceberg write block (same API: df.writeTo().append/overwritePartitions).
+6. Wrap in EMR boilerplate (argparse, SparkSession.builder, structured logging).
+7. Add reconciliation calls.
+
+## Templates Used
+- templates/pyspark/emr_job_boilerplate.py
+- templates/pyspark/snowflake_reader_spark.py  (shared with Glue)
+- templates/pyspark/iceberg_writer_spark.py    (shared with Glue)
+- templates/common/reconciliation.py
+
+## Output
+- Generated PySpark file at pipelines/{product_name}/emr_jobs/{job_name}.py.
+```
+
+#### Skill: `generate-lambda-pipeline`
+
+**File:** `.claude/skills/generate-lambda-pipeline/SKILL.md`
+
+```markdown
+---
+name: generate-lambda-pipeline
+description: Generates a Python+Pandas Lambda handler from a pipeline config. Uses snowflake-connector-python and pyiceberg. Use when compute.engine is lambda.
+argument-hint: "[config-path]"
+allowed-tools: Read Grep Glob Write Bash
+---
+
+# Skill: generate-lambda-pipeline
+
+## Description
+Generates a Python+Pandas Lambda function for lightweight ETL jobs.
+
+## Key Differences from PySpark
+- No Spark -- uses pandas DataFrames for all transformations.
+- Snowflake reads via snowflake-connector-python (DBAPI, not Spark connector).
+- Iceberg writes via pyiceberg library (not Spark writeTo).
+- Lambda handler function signature: handler(event, context).
+- 15-minute timeout and 10 GB memory limit -- validate dataset size in config.
+
+## Steps
+1. Read the pipeline config YAML.
+2. Validate that the data volume is appropriate for Lambda (check config metadata).
+3. Generate the Lambda handler function.
+4. For each source: generate Snowflake read using snowflake-connector-python + pandas.
+5. Generate joins using pandas merge().
+6. Generate aggregations using pandas groupby().agg().
+7. Generate Iceberg write using pyiceberg Table API.
+8. Add structured logging (Python logging module) and error handling.
+9. Generate requirements.txt for Lambda layer packaging.
+
+## Templates Used
+- templates/python/lambda_handler.py
+- templates/python/snowflake_reader_pandas.py
+- templates/python/iceberg_writer_pyiceberg.py
+- templates/common/reconciliation.py
+
+## Output
+- Generated Lambda handler at pipelines/{product_name}/lambda_jobs/{job_name}.py.
+- Generated requirements.txt at pipelines/{product_name}/lambda_jobs/requirements.txt.
+```
+
+#### Skill: `generate-ecs-pipeline`
+
+**File:** `.claude/skills/generate-ecs-pipeline/SKILL.md`
+
+```markdown
+---
+name: generate-ecs-pipeline
+description: Generates a Python+Pandas ECS Fargate task from a pipeline config. Includes Dockerfile and entrypoint script. Use when compute.engine is ecs.
+argument-hint: "[config-path]"
+allowed-tools: Read Grep Glob Write Bash
+---
+
+# Skill: generate-ecs-pipeline
+
+## Description
+Generates a containerized Python+Pandas ETL job for ECS Fargate.
+
+## Key Differences from Lambda
+- No timeout limit (unlike Lambda's 15 minutes).
+- Runs as a Docker container on ECS Fargate.
+- Entry point is a standalone Python script (not a Lambda handler).
+- Generates Dockerfile based on corporate base image.
+- Suitable for medium-to-large datasets that exceed Lambda memory limits.
+
+## Steps
+1. Read the pipeline config YAML.
+2. Generate the Python entrypoint script (main.py).
+3. For each source: generate Snowflake read using snowflake-connector-python + pandas
+   (same templates as Lambda).
+4. Generate joins, aggregations, filters using pandas (same as Lambda).
+5. Generate Iceberg write using pyiceberg (same as Lambda).
+6. Generate Dockerfile:
+   a. Use corporate base image from ECR.
+   b. Install dependencies from requirements.txt.
+   c. Copy entrypoint script.
+   d. Set CMD to run the entrypoint.
+7. Generate requirements.txt.
+8. Add structured logging and error handling.
+
+## Templates Used
+- templates/python/ecs_entrypoint.py
+- templates/python/Dockerfile
+- templates/python/snowflake_reader_pandas.py  (shared with Lambda)
+- templates/python/iceberg_writer_pyiceberg.py (shared with Lambda)
+- templates/common/reconciliation.py
+
+## Output
+- Generated entrypoint at pipelines/{product_name}/ecs_jobs/{job_name}.py.
+- Generated Dockerfile at pipelines/{product_name}/ecs_jobs/Dockerfile.
+- Generated requirements.txt at pipelines/{product_name}/ecs_jobs/requirements.txt.
+```
+
 ### 2.3 Subagent Structure
 
 Subagents are specialized Claude instances scoped to a single responsibility. They are
@@ -382,8 +590,8 @@ invoked by the orchestrator and run with their own system prompt + relevant skil
 |----------|---------------|-------------|------------|
 | **Requirement Parser** | Extracts structured requirements from Jira ticket | (none -- direct parsing) | JIRA MCP |
 | **Spec Generator** | Creates technical specification, publishes to Confluence | (none -- direct generation) | JIRA MCP, Confluence MCP |
-| **Config Generator** | Produces validated pipeline config YAML | validate-config | None |
-| **Pipeline Generator** | Generates PySpark, Step Functions, Lambdas | generate-pipeline, generate-step-function | None |
+| **Config Generator** | Produces validated pipeline config YAML | validate-config, validate-connection | None |
+| **Pipeline Generator** | Generates ETL code (PySpark or Python), Step Functions, Lambdas | generate-pipeline, generate-emr-pipeline, generate-lambda-pipeline, generate-ecs-pipeline, generate-step-function | None |
 | **Infra Agent** | Generates and plans Terraform | generate-terraform | None |
 | **QA Agent** | Creates and runs reconciliation checks, data quality | run-recon, validate-config | None |
 
@@ -660,6 +868,39 @@ echo "HOOK PASS: Reconciliation passed."
 exit 0  # Exit 0 = allow the operation
 ```
 
+**File:** `hooks/post-codegen-docker-lint.sh`
+
+```bash
+#!/bin/bash
+# Hook: post-codegen-docker-lint
+# Fires: After Pipeline Generator writes a Dockerfile (PostToolUse on Write|Edit)
+# Purpose: Lint Dockerfile for best practices (ECS engine only)
+# Note: Claude Code hooks receive JSON on stdin with tool_input details
+
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+
+# Only lint Dockerfiles
+if [ -n "$FILE_PATH" ] && echo "$FILE_PATH" | grep -qi 'Dockerfile'; then
+  if command -v hadolint &>/dev/null; then
+    echo "Running hadolint on $FILE_PATH..."
+    HADOLINT_OUTPUT=$(hadolint "$FILE_PATH" 2>&1)
+    HADOLINT_EXIT=$?
+
+    if [ $HADOLINT_EXIT -ne 0 ]; then
+      echo "BLOCKED: Dockerfile lint failed." >&2
+      echo "$HADOLINT_OUTPUT" >&2
+      exit 2  # Exit 2 = block the operation
+    fi
+  else
+    echo "WARNING: hadolint not installed, skipping Dockerfile lint." >&2
+  fi
+fi
+
+echo "HOOK PASS: Dockerfile lint passed."
+exit 0  # Exit 0 = allow the operation
+```
+
 #### Hook Registration in Claude Code Settings
 
 Hooks are registered in `.claude/settings.json` (shared with team) or
@@ -705,6 +946,12 @@ event types (`PreToolUse`, `PostToolUse`, `Stop`, etc.) with matchers and handle
             "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/post-codegen-lint.sh",
             "timeout": 60,
             "statusMessage": "Linting and security-scanning generated code..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/post-codegen-docker-lint.sh",
+            "timeout": 30,
+            "statusMessage": "Linting Dockerfile (ECS engine)..."
           }
         ]
       }
@@ -732,6 +979,7 @@ event types (`PreToolUse`, `PostToolUse`, `Stop`, etc.) with matchers and handle
 |------------|------------------|---------|-------------|
 | Config Generation | `PreToolUse` | `Write\|Edit` (config files) | `pre-config-validation.sh` |
 | Code Generation | `PostToolUse` | `Write\|Edit` (Python files) | `post-codegen-lint.sh` (advisory -- PostToolUse cannot block; stderr feedback prompts Claude to fix issues) |
+| Code Generation (ECS) | `PostToolUse` | `Write\|Edit` (Dockerfile) | `post-codegen-docker-lint.sh` (advisory -- runs hadolint on generated Dockerfiles) |
 | Deploy | `PreToolUse` | `Bash(terraform apply*)` | `pre-deploy-terraform-plan.sh` |
 | Post-Deploy | `Stop` | (any) | `post-deploy-recon.sh` |
 
@@ -970,7 +1218,7 @@ Every agent reads from it. Below is the full schema.
 # JSON Schema (expressed in YAML for readability)
 pipeline_config_schema:
   type: object
-  required: [product, sources, transformations, target, reconciliation, runtime]
+  required: [product, compute, sources, transformations, target, reconciliation, runtime]
   properties:
 
     product:
@@ -988,6 +1236,19 @@ pipeline_config_schema:
           properties:
             frequency: { type: string, enum: [hourly, daily, weekly, monthly] }
             cron: { type: string }
+
+    compute:
+      type: object
+      required: [engine]
+      properties:
+        engine:
+          type: string
+          enum: [glue, emr, lambda, ecs]
+          description: "Compute engine for ETL execution"
+        language:
+          type: string
+          enum: [pyspark, python]
+          description: "Auto-derived: glue/emr -> pyspark, lambda/ecs -> python. Can be set explicitly."
 
     sources:
       type: array
@@ -1126,17 +1387,43 @@ pipeline_config_schema:
 
     runtime:
       type: object
-      required: [glue_version, worker_type, num_workers, timeout_minutes]
+      required: [timeout_minutes]
+      description: "Engine-specific runtime configuration. Required fields vary by compute.engine."
       properties:
+        # Common fields (all engines)
+        timeout_minutes: { type: integer, minimum: 1, maximum: 2880 }
+        max_concurrent_runs: { type: integer, default: 1 }
+        tags: { type: object, additionalProperties: { type: string } }
+
+        # Glue-specific (when compute.engine = glue)
         glue_version: { type: string, enum: ["4.0"] }
         worker_type: { type: string, enum: [G.1X, G.2X, G.4X, G.8X, Z.2X] }
         num_workers: { type: integer, minimum: 2, maximum: 100 }
-        timeout_minutes: { type: integer, minimum: 5, maximum: 2880 }
-        max_concurrent_runs: { type: integer, default: 1 }
         extra_py_files: { type: array, items: { type: string } }
         extra_jars: { type: array, items: { type: string } }
         job_parameters: { type: object, additionalProperties: { type: string } }
-        tags: { type: object, additionalProperties: { type: string } }
+
+        # EMR-specific (when compute.engine = emr)
+        emr_release: { type: string, pattern: "^emr-\\d+\\.\\d+\\.\\d+$" }
+        emr_mode: { type: string, enum: [serverless, ec2], default: "serverless" }
+        emr_application_id: { type: string, description: "EMR Serverless application ID (serverless mode)" }
+        instance_type: { type: string, description: "EC2 instance type (ec2 mode)" }
+        instance_count: { type: integer, minimum: 1, maximum: 100, description: "Number of instances (ec2 mode)" }
+        spark_submit_parameters: { type: string, description: "Additional spark-submit args" }
+
+        # Lambda-specific (when compute.engine = lambda)
+        lambda_memory_mb: { type: integer, minimum: 128, maximum: 10240 }
+        lambda_timeout_seconds: { type: integer, minimum: 1, maximum: 900 }
+        python_runtime: { type: string, enum: ["python3.11", "python3.12"], default: "python3.11" }
+        lambda_layers: { type: array, items: { type: string }, description: "Lambda layer ARNs" }
+        lambda_package_type: { type: string, enum: [zip, image], default: "zip" }
+
+        # ECS-specific (when compute.engine = ecs)
+        ecs_cpu: { type: integer, enum: [256, 512, 1024, 2048, 4096], description: "Fargate CPU units" }
+        ecs_memory: { type: integer, description: "Fargate memory in MB (512-30720)" }
+        container_image: { type: string, description: "ECR image URI (if pre-built)" }
+        ecs_task_role: { type: string, description: "IAM role ARN for the ECS task" }
+        ecs_cluster: { type: string, description: "ECS cluster name (uses shared cluster if omitted)" }
 ```
 
 ### 4.2 Full Example Config
@@ -1153,6 +1440,11 @@ product:
     Joins customer_orders and product_catalog from Snowflake,
     aggregates monthly revenue by product category, and writes
     to an Iceberg table for downstream consumption.
+
+# Compute engine selection (glue | emr | lambda | ecs)
+compute:
+  engine: glue          # PySpark on AWS Glue
+  language: pyspark     # auto-derived from engine
   tags:
     cost_center: "CC-1234"
     data_classification: "internal"
@@ -1346,9 +1638,44 @@ runtime:
 ### 5.1 Template Library
 
 Templates are parameterized Python files that Claude fills in using values from the config.
-They live in `templates/` and are referenced by skills.
+They are organized into engine-scoped directories under `templates/`:
 
-#### Template: `templates/glue_job_boilerplate.py`
+```
+templates/
+  common/                          # Shared across all engines
+    reconciliation.py              # Source vs target comparison framework
+    data_quality.py                # Data quality check framework
+  pyspark/                         # Shared by Glue + EMR engines
+    glue_job_boilerplate.py        # Glue-specific: GlueContext, job.init/commit
+    emr_job_boilerplate.py         # EMR-specific: plain SparkSession, argparse entry
+    snowflake_reader_spark.py      # Spark Snowflake connector (OAuth + proxy)
+    iceberg_writer_spark.py        # Spark writeTo() Iceberg API
+  python/                          # Shared by Lambda + ECS engines
+    lambda_handler.py              # Lambda handler function skeleton
+    ecs_entrypoint.py              # ECS containerized entry point (main.py)
+    Dockerfile                     # ECS Dockerfile (corporate base image)
+    snowflake_reader_pandas.py     # snowflake-connector-python + pandas
+    iceberg_writer_pyiceberg.py    # pyiceberg Table API for Iceberg writes
+```
+
+**Engine-to-template mapping:**
+
+| Engine | Boilerplate | Snowflake Reader | Iceberg Writer | Reconciliation |
+|--------|------------|------------------|----------------|----------------|
+| Glue | `pyspark/glue_job_boilerplate.py` | `pyspark/snowflake_reader_spark.py` | `pyspark/iceberg_writer_spark.py` | `common/reconciliation.py` |
+| EMR | `pyspark/emr_job_boilerplate.py` | `pyspark/snowflake_reader_spark.py` | `pyspark/iceberg_writer_spark.py` | `common/reconciliation.py` |
+| Lambda | `python/lambda_handler.py` | `python/snowflake_reader_pandas.py` | `python/iceberg_writer_pyiceberg.py` | `common/reconciliation.py` |
+| ECS | `python/ecs_entrypoint.py` + `python/Dockerfile` | `python/snowflake_reader_pandas.py` | `python/iceberg_writer_pyiceberg.py` | `common/reconciliation.py` |
+
+> **Key reuse:** Glue and EMR share the same Snowflake reader and Iceberg writer templates
+> (both use Spark). Lambda and ECS share the same Pandas-based templates. Reconciliation
+> logic is shared across all engines.
+
+The following sections show the **PySpark templates** (Glue engine) in detail. The Pandas-based
+templates (Lambda/ECS) follow the same logical structure using `snowflake-connector-python`
+for reads and `pyiceberg` for writes instead of Spark APIs.
+
+#### Template: `templates/pyspark/glue_job_boilerplate.py`
 
 ```python
 """
@@ -1407,7 +1734,7 @@ except Exception as e:
     raise
 ```
 
-#### Template: `templates/snowflake_reader.py`
+#### Template: `templates/pyspark/snowflake_reader_spark.py`
 
 ```python
 def read_from_snowflake(spark, source_config):
@@ -1482,7 +1809,7 @@ def read_from_snowflake(spark, source_config):
     return df
 ```
 
-#### Template: `templates/iceberg_writer.py`
+#### Template: `templates/pyspark/iceberg_writer_spark.py`
 
 ```python
 def write_to_iceberg(df, target_config, logger):
@@ -1515,7 +1842,7 @@ def write_to_iceberg(df, target_config, logger):
     logger.info(f"Successfully wrote to {table_identifier}")
 ```
 
-#### Template: `templates/reconciliation.py`
+#### Template: `templates/common/reconciliation.py`
 
 ```python
 def run_reconciliation(spark, recon_config, source_dfs, target_table, logger):
@@ -2242,22 +2569,32 @@ PR check. It reviews the generated code with these focus areas:
 
 ### 7.1 Infrastructure Generated per Data Product
 
-Each analytical data product generates the following Terraform resources:
+Each analytical data product generates Terraform resources based on the selected compute engine.
+
+**Common resources (all engines):**
 
 | Resource | Purpose |
 |----------|---------|
 | `aws_glue_catalog_database` | Database in Glue Catalog for the Iceberg table |
 | `aws_glue_catalog_table` | Iceberg table definition |
-| `aws_glue_job` | PySpark ETL job |
-| `aws_iam_role` + `aws_iam_policy` | Glue execution role with S3, Secrets Manager, Glue Catalog access |
+| `aws_iam_role` + `aws_iam_policy` | Execution role with S3, Secrets Manager, Glue Catalog access |
 | `aws_sfn_state_machine` | Step Function orchestrator |
 | `aws_lambda_function` (x2) | Reconciliation checker + notification handler |
 | `aws_lambda_permission` | Allow Step Function to invoke Lambdas |
-| `aws_cloudwatch_log_group` (x3) | Logs for Glue, Lambda, Step Function |
+| `aws_cloudwatch_log_group` | Logs for compute engine, Lambda, Step Function |
 | `aws_cloudwatch_metric_alarm` | Alert on job failure, duration SLA breach |
 | `aws_sns_topic` + `aws_sns_topic_subscription` | Notifications for success/failure |
 | `aws_scheduler_schedule` | EventBridge Scheduler for cron triggers |
-| `aws_s3_object` | Upload Glue script and Lambda code to S3 |
+| `aws_s3_object` | Upload scripts/code to S3 |
+
+**Engine-specific resources:**
+
+| Engine | Additional Resources |
+|--------|---------------------|
+| **Glue** | `aws_glue_job` (PySpark ETL job) |
+| **EMR** | `aws_emrserverless_application` + `aws_emrserverless_job_run` (Serverless), or `aws_emr_cluster` + `aws_emr_instance_group` (EC2 mode) |
+| **Lambda** | `aws_lambda_function` (primary ETL -- additional to recon Lambda), `aws_lambda_layer_version` (pandas, pyiceberg, snowflake-connector layers) |
+| **ECS** | `aws_ecs_task_definition`, `aws_ecs_service`, `aws_ecr_repository`, `aws_ecr_lifecycle_policy` |
 
 ### 7.2 Module Structure
 
@@ -2268,12 +2605,24 @@ terraform/
       main.tf           # aws_glue_job, aws_glue_catalog_database, aws_glue_catalog_table
       variables.tf
       outputs.tf
+    emr_cluster/
+      main.tf           # aws_emrserverless_application (serverless) or aws_emr_cluster (ec2)
+      variables.tf
+      outputs.tf
+    ecs_task/
+      main.tf           # aws_ecs_task_definition, aws_ecs_service
+      variables.tf
+      outputs.tf
+    ecr/
+      main.tf           # aws_ecr_repository, aws_ecr_lifecycle_policy
+      variables.tf
+      outputs.tf
     step_function/
       main.tf           # aws_sfn_state_machine, aws_scheduler_schedule
       variables.tf
       outputs.tf
     lambda/
-      main.tf           # aws_lambda_function, aws_lambda_permission
+      main.tf           # aws_lambda_function, aws_lambda_permission, aws_lambda_layer_version
       variables.tf
       outputs.tf
     iam/
@@ -2537,13 +2886,21 @@ analytical-data-product-{name}/
 |   |
 |   |-- skills/                        # Claude Code skills (slash commands)
 |   |   |-- generate-pipeline/
-|   |   |   |-- SKILL.md               # /generate-pipeline skill definition
+|   |   |   |-- SKILL.md               # /generate-pipeline orchestrator (delegates by engine)
+|   |   |-- generate-emr-pipeline/
+|   |   |   |-- SKILL.md               # /generate-emr-pipeline (PySpark on EMR)
+|   |   |-- generate-lambda-pipeline/
+|   |   |   |-- SKILL.md               # /generate-lambda-pipeline (Python+Pandas on Lambda)
+|   |   |-- generate-ecs-pipeline/
+|   |   |   |-- SKILL.md               # /generate-ecs-pipeline (Python+Pandas on ECS)
 |   |   |-- generate-step-function/
 |   |   |   |-- SKILL.md               # /generate-step-function skill definition
 |   |   |-- generate-terraform/
 |   |   |   |-- SKILL.md               # /generate-terraform skill definition
 |   |   |-- validate-config/
 |   |   |   |-- SKILL.md               # /validate-config skill definition
+|   |   |-- validate-connection/
+|   |   |   |-- SKILL.md               # /validate-connection (Snowflake OAuth/proxy check)
 |   |   |-- run-recon/
 |   |       |-- SKILL.md               # /run-recon skill definition
 |   |
@@ -2571,22 +2928,41 @@ analytical-data-product-{name}/
 |   |-- pipeline_config_schema.json    # JSON Schema for config validation
 |
 |-- templates/
-|   |-- glue_job_boilerplate.py        # PySpark Glue job skeleton
-|   |-- snowflake_reader.py            # Snowflake read utility (OAuth + proxy)
-|   |-- iceberg_writer.py              # Iceberg write utility
-|   |-- reconciliation.py              # Reconciliation framework
-|   |-- lambda_handler.py              # Lambda function skeleton
+|   |-- common/                        # Shared across all engines
+|   |   |-- reconciliation.py          # Source vs target comparison framework
+|   |   |-- data_quality.py            # Data quality check framework
+|   |-- pyspark/                       # Glue + EMR engines
+|   |   |-- glue_job_boilerplate.py    # Glue-specific skeleton (GlueContext)
+|   |   |-- emr_job_boilerplate.py     # EMR-specific skeleton (SparkSession)
+|   |   |-- snowflake_reader_spark.py  # Spark Snowflake connector (OAuth + proxy)
+|   |   |-- iceberg_writer_spark.py    # Spark writeTo() Iceberg API
+|   |-- python/                        # Lambda + ECS engines
+|       |-- lambda_handler.py          # Lambda handler skeleton
+|       |-- ecs_entrypoint.py          # ECS containerized entry point
+|       |-- Dockerfile                 # ECS Dockerfile (corporate base image)
+|       |-- snowflake_reader_pandas.py # snowflake-connector-python + pandas
+|       |-- iceberg_writer_pyiceberg.py # pyiceberg Table API
 |
 |-- hooks/
 |   |-- pre-config-validation.sh       # Validates no Snowflake writes in config
 |   |-- post-codegen-lint.sh           # Lints and security-scans generated code
+|   |-- post-codegen-docker-lint.sh    # Lints Dockerfiles (ECS engine, hadolint)
 |   |-- pre-deploy-terraform-plan.sh   # Terraform plan safety check
 |   |-- post-deploy-recon.sh           # Post-deployment reconciliation trigger
 |
 |-- pipelines/
 |   |-- {product_name}/
-|       |-- glue_jobs/
-|       |   |-- {product_name}_etl.py           # Generated PySpark job
+|       |-- glue_jobs/                 # Generated output (Glue engine)
+|       |   |-- {product_name}_etl.py
+|       |-- emr_jobs/                  # Generated output (EMR engine)
+|       |   |-- {product_name}_etl.py
+|       |-- lambda_jobs/               # Generated output (Lambda engine)
+|       |   |-- {product_name}_etl.py
+|       |   |-- requirements.txt
+|       |-- ecs_jobs/                  # Generated output (ECS engine)
+|       |   |-- {product_name}_etl.py
+|       |   |-- Dockerfile
+|       |   |-- requirements.txt
 |       |-- step_functions/
 |       |   |-- {product_name}_orchestrator.asl.json  # Generated Step Function
 |       |-- lambdas/
@@ -2597,7 +2973,19 @@ analytical-data-product-{name}/
 |
 |-- terraform/
 |   |-- modules/
-|   |   |-- glue_job/
+|   |   |-- glue_job/                  # Glue engine
+|   |   |   |-- main.tf
+|   |   |   |-- variables.tf
+|   |   |   |-- outputs.tf
+|   |   |-- emr_cluster/               # EMR engine
+|   |   |   |-- main.tf
+|   |   |   |-- variables.tf
+|   |   |   |-- outputs.tf
+|   |   |-- ecs_task/                  # ECS engine
+|   |   |   |-- main.tf
+|   |   |   |-- variables.tf
+|   |   |   |-- outputs.tf
+|   |   |-- ecr/                       # ECS container registry
 |   |   |   |-- main.tf
 |   |   |   |-- variables.tf
 |   |   |   |-- outputs.tf
@@ -2682,11 +3070,13 @@ REPO_DIR="analytical-data-product-${PRODUCT_NAME}"
 echo "Initializing analytical data product: ${PRODUCT_NAME} (domain: ${DOMAIN})"
 
 # Create directory structure
-mkdir -p "${REPO_DIR}/.claude/skills"/{generate-pipeline,generate-step-function,generate-terraform,validate-config,run-recon}
+mkdir -p "${REPO_DIR}/.claude/skills"/{generate-pipeline,generate-emr-pipeline,generate-lambda-pipeline,generate-ecs-pipeline,generate-step-function,generate-terraform,validate-config,validate-connection,run-recon}
 mkdir -p "${REPO_DIR}/.claude/agents"/{requirement-parser,spec-generator,config-generator,pipeline-generator,infra-agent,qa-agent}
-mkdir -p "${REPO_DIR}"/{configs/defaults,schemas,templates,hooks}
-mkdir -p "${REPO_DIR}/pipelines/${PRODUCT_NAME}"/{glue_jobs,step_functions,lambdas,recon}
-mkdir -p "${REPO_DIR}/terraform/modules"/{glue_job,step_function,lambda,iam,monitoring}
+mkdir -p "${REPO_DIR}"/{configs/defaults,schemas}
+mkdir -p "${REPO_DIR}/templates"/{common,pyspark,python}
+mkdir -p "${REPO_DIR}/hooks"
+mkdir -p "${REPO_DIR}/pipelines/${PRODUCT_NAME}"/{glue_jobs,emr_jobs,lambda_jobs,ecs_jobs,step_functions,lambdas,recon}
+mkdir -p "${REPO_DIR}/terraform/modules"/{glue_job,emr_cluster,ecs_task,ecr,step_function,lambda,iam,monitoring}
 mkdir -p "${REPO_DIR}/terraform/environments"/{dev,staging,prod}
 mkdir -p "${REPO_DIR}/tests/${PRODUCT_NAME}"
 mkdir -p "${REPO_DIR}/tests/integration"
@@ -2698,7 +3088,7 @@ mkdir -p "${REPO_DIR}/harness"
 TEMPLATE_REPO="/path/to/adp-template"
 
 # Copy skills (each SKILL.md into its own directory)
-for skill in generate-pipeline generate-step-function generate-terraform validate-config run-recon; do
+for skill in generate-pipeline generate-emr-pipeline generate-lambda-pipeline generate-ecs-pipeline generate-step-function generate-terraform validate-config validate-connection run-recon; do
   cp "${TEMPLATE_REPO}/.claude/skills/${skill}/SKILL.md" "${REPO_DIR}/.claude/skills/${skill}/"
 done
 
@@ -2707,8 +3097,13 @@ for agent in requirement-parser spec-generator config-generator pipeline-generat
   cp "${TEMPLATE_REPO}/.claude/agents/${agent}/AGENT.md" "${REPO_DIR}/.claude/agents/${agent}/"
 done
 
-# Copy code templates, hooks, schemas, and CI/CD configs
-cp "${TEMPLATE_REPO}/templates/"*.py "${REPO_DIR}/templates/"
+# Copy code templates (engine-scoped directories)
+cp "${TEMPLATE_REPO}/templates/common/"*.py "${REPO_DIR}/templates/common/"
+cp "${TEMPLATE_REPO}/templates/pyspark/"*.py "${REPO_DIR}/templates/pyspark/"
+cp "${TEMPLATE_REPO}/templates/python/"*.py "${REPO_DIR}/templates/python/"
+cp "${TEMPLATE_REPO}/templates/python/Dockerfile" "${REPO_DIR}/templates/python/"
+
+# Copy hooks and schemas
 cp "${TEMPLATE_REPO}/hooks/"*.sh "${REPO_DIR}/hooks/"
 cp "${TEMPLATE_REPO}/schemas/"*.json "${REPO_DIR}/schemas/"
 cp "${TEMPLATE_REPO}/Jenkinsfile" "${REPO_DIR}/"
@@ -2773,10 +3168,14 @@ cat > "${REPO_DIR}/CLAUDE.md" <<EOF
 - Target: Iceberg table in s3://${DOMAIN}-adp-prod/${DOMAIN}/${PRODUCT_NAME}/
 
 ## Skills Available (in .claude/skills/)
-- /generate-pipeline: Creates PySpark Glue job from config
+- /generate-pipeline: Orchestrator -- reads compute.engine from config, delegates to engine-specific skill
+- /generate-emr-pipeline: Creates PySpark EMR job from config (no GlueContext)
+- /generate-lambda-pipeline: Creates Python+Pandas Lambda handler from config
+- /generate-ecs-pipeline: Creates Python+Pandas ECS entrypoint + Dockerfile from config
 - /generate-step-function: Creates Step Function ASL from config
 - /generate-terraform: Creates Terraform modules for this product
 - /validate-config: Validates pipeline config YAML against schema
+- /validate-connection: Validates Snowflake connection config (OAuth, proxy, read-only)
 - /run-recon: Generates reconciliation query set
 
 ## MCP Servers
@@ -2787,7 +3186,7 @@ EOF
 echo "Product initialized at: ${REPO_DIR}"
 echo "Next steps:"
 echo "  1. Set ATLASSIAN_API_TOKEN in .claude/settings.local.json"
-echo "  2. Create configs/${PRODUCT_NAME}.yaml"
+echo "  2. Create configs/${PRODUCT_NAME}.yaml (set compute.engine: glue|emr|lambda|ecs)"
 ```
 
 ---
