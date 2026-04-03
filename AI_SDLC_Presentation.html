@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI SDLC for Analytical Data Products | SCRUM-4</title>
+<style>
+  /* ── Reset & Base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  body { background: linear-gradient(135deg, #0f0c29 0%, #1a1a4e 40%, #24243e 100%); color: #e8e8f0; }
+
+  /* ── Slide Container ──────────────────────────────────────── */
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; padding: 60px 80px;
+    opacity: 0; pointer-events: none; transition: opacity 0.5s ease, transform 0.5s ease;
+    transform: translateX(40px);
+  }
+  .slide.active { opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .slide.prev { transform: translateX(-40px); }
+
+  /* ── Progress Bar ─────────────────────────────────────────── */
+  #progress { position: fixed; top: 0; left: 0; height: 3px; background: linear-gradient(90deg, #7b2ff7, #00d2ff); transition: width 0.4s ease; z-index: 100; }
+
+  /* ── Slide Counter ────────────────────────────────────────── */
+  #counter { position: fixed; bottom: 24px; right: 36px; font-size: 14px; color: #888; z-index: 100; font-variant-numeric: tabular-nums; }
+
+  /* ── Nav Arrows ───────────────────────────────────────────── */
+  .nav-btn {
+    position: fixed; top: 50%; transform: translateY(-50%); z-index: 100;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+    color: #ccc; width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+    font-size: 20px; display: flex; align-items: center; justify-content: center;
+    transition: background 0.2s;
+  }
+  .nav-btn:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  #navPrev { left: 18px; }
+  #navNext { right: 18px; }
+
+  /* ── Typography ───────────────────────────────────────────── */
+  h1 { font-size: 2.6em; font-weight: 700; letter-spacing: -1px; margin-bottom: 16px; background: linear-gradient(90deg, #00d2ff, #7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  h2 { font-size: 2em; font-weight: 600; margin-bottom: 24px; color: #c0c0ff; }
+  h3 { font-size: 1.3em; font-weight: 600; margin-bottom: 12px; color: #a0a0d0; }
+  p, li { font-size: 1.05em; line-height: 1.7; color: #d0d0e0; }
+  .subtitle { font-size: 1.15em; color: #8888bb; margin-bottom: 8px; }
+  .big-number { font-size: 3em; font-weight: 800; background: linear-gradient(90deg,#00d2ff,#7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+  /* ── Content Layouts ──────────────────────────────────────── */
+  .content { width: 100%; max-width: 1100px; }
+  .content ul { list-style: none; padding-left: 0; }
+  .content ul li { padding: 6px 0 6px 28px; position: relative; }
+  .content ul li::before { content: ''; position: absolute; left: 0; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, #7b2ff7, #00d2ff); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+  .card {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 24px; transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+  .card h3 { margin-bottom: 10px; }
+
+  /* ── Badges ───────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.72em;
+    font-weight: 600; letter-spacing: 0.3px; margin: 2px 3px; text-transform: uppercase;
+  }
+  .badge-skill { background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+  .badge-subagent { background: rgba(59,130,246,0.2); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+  .badge-hook { background: rgba(251,146,60,0.2); color: #fb923c; border: 1px solid rgba(251,146,60,0.3); }
+  .badge-mcp { background: rgba(168,85,247,0.2); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+  .badge-claudemd { background: rgba(20,184,166,0.2); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.3); }
+
+  /* ── Flow Diagram ─────────────────────────────────────────── */
+  .flow { display: flex; align-items: flex-start; justify-content: center; flex-wrap: wrap; gap: 0; margin: 20px 0; }
+  .flow-stage {
+    display: flex; flex-direction: column; align-items: center; width: 120px; position: relative;
+  }
+  .flow-box {
+    width: 110px; padding: 14px 8px; border-radius: 10px; text-align: center;
+    font-size: 0.78em; font-weight: 700; color: #fff; position: relative;
+    background: linear-gradient(135deg, #1e1e4a, #2a2a60); border: 1.5px solid rgba(123,47,247,0.4);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  .flow-box .num { display: block; font-size: 1.5em; margin-bottom: 4px; color: #00d2ff; }
+  .flow-arrow {
+    color: #7b2ff7; font-size: 1.6em; margin: 0 -2px; align-self: center; padding-top: 10px;
+  }
+  .flow-badges { margin-top: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .flow-badges .badge { font-size: 0.58em; padding: 2px 6px; }
+
+  /* ── Agent Diagram ────────────────────────────────────────── */
+  .agent-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  .agent-card {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(123,47,247,0.25);
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .agent-card .agent-icon { font-size: 2em; margin-bottom: 8px; }
+  .agent-card h4 { font-size: 0.95em; color: #c0c0ff; margin-bottom: 6px; }
+  .agent-card p { font-size: 0.78em; color: #999; }
+
+  /* ── Pipeline Flow ────────────────────────────────────────── */
+  .pipeline-flow { display: flex; align-items: center; justify-content: center; gap: 0; margin: 20px 0; flex-wrap: wrap; }
+  .pipe-box {
+    padding: 12px 18px; border-radius: 8px; font-size: 0.82em; font-weight: 600;
+    text-align: center; min-width: 100px;
+  }
+  .pipe-arrow { color: #555; font-size: 1.4em; margin: 0 4px; }
+  .pipe-dev { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: #4ade80; }
+  .pipe-staging { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.3); color: #fbbf24; }
+  .pipe-prod { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #f87171; }
+  .pipe-action { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3); color: #60a5fa; }
+
+  /* ── Folder Tree ──────────────────────────────────────────── */
+  .tree { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85em; line-height: 1.8; color: #a0a0d0; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 20px 28px; }
+  .tree .folder { color: #60a5fa; font-weight: 600; }
+  .tree .file { color: #888; }
+  .tree .highlight { color: #4ade80; }
+
+  /* ── Table ────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th { text-align: left; padding: 10px 14px; font-size: 0.85em; color: #8888bb; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  td { padding: 10px 14px; font-size: 0.85em; color: #c0c0e0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+  /* ── Walkthrough ──────────────────────────────────────────── */
+  .wt-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .wt-step {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px; padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start;
+  }
+  .wt-num {
+    min-width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-weight: 800; font-size: 0.85em;
+    background: linear-gradient(135deg, #7b2ff7, #00d2ff); color: #fff;
+  }
+  .wt-step h4 { font-size: 0.9em; color: #c0c0ff; margin-bottom: 4px; }
+  .wt-step p { font-size: 0.75em; color: #999; }
+
+  /* ── Roadmap ──────────────────────────────────────────────── */
+  .roadmap { display: flex; gap: 24px; margin-top: 16px; }
+  .rm-phase {
+    flex: 1; background: rgba(255,255,255,0.04); border-radius: 10px; padding: 20px;
+    border-top: 3px solid;
+  }
+  .rm-phase:nth-child(1) { border-color: #4ade80; }
+  .rm-phase:nth-child(2) { border-color: #fbbf24; }
+  .rm-phase:nth-child(3) { border-color: #7b2ff7; }
+  .rm-phase h4 { font-size: 0.95em; margin-bottom: 8px; }
+  .rm-phase p { font-size: 0.82em; color: #999; }
+
+  /* ── Animations ───────────────────────────────────────────── */
+  .slide.active .fade-in { animation: fadeInUp 0.6s ease forwards; opacity: 0; }
+  .slide.active .fade-in:nth-child(2) { animation-delay: 0.15s; }
+  .slide.active .fade-in:nth-child(3) { animation-delay: 0.3s; }
+  .slide.active .fade-in:nth-child(4) { animation-delay: 0.45s; }
+  .slide.active .fade-in:nth-child(5) { animation-delay: 0.6s; }
+  @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(123,47,247,0.3); } 50% { box-shadow: 0 0 20px 4px rgba(123,47,247,0.15); } }
+  .flow-box { animation: pulse 3s infinite; }
+
+  /* ── QA Slide ─────────────────────────────────────────────── */
+  .qa-center { text-align: center; }
+  .qa-center h1 { font-size: 3.2em; margin-bottom: 20px; }
+  .qa-center p { font-size: 1.2em; color: #888; }
+
+  @media (max-width: 900px) {
+    .slide { padding: 30px 24px; }
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.4em; }
+    .two-col, .three-col { grid-template-columns: 1fr; }
+    .flow-stage { width: 80px; }
+    .flow-box { width: 75px; font-size: 0.65em; padding: 10px 4px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div id="counter"></div>
+<button class="nav-btn" id="navPrev">&#8249;</button>
+<button class="nav-btn" id="navNext">&#8250;</button>
+
+<div class="deck">
+
+<!-- ═══════════════ SLIDE 1: Title ═══════════════ -->
+<div class="slide active" data-slide="1">
+  <div class="content" style="text-align:center;">
+    <p class="subtitle fade-in">SCRUM-4 | Data Mesh Architecture on AWS</p>
+    <h1 class="fade-in" style="font-size:2.8em;">AI SDLC for Analytical<br>Data Products</h1>
+    <p class="fade-in" style="font-size:1.1em; color:#888; margin-top:16px;">Powered by Anthropic Claude &mdash; Skills, Subagents, MCP, Hooks</p>
+    <p class="fade-in" style="font-size:0.85em; color:#555; margin-top:32px;">April 2026 &bull; Architecture & Senior Leadership Review</p>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 2: Executive Summary ═══════════════ -->
+<div class="slide" data-slide="2">
+  <div class="content">
+    <h2 class="fade-in">Executive Summary</h2>
+    <ul>
+      <li class="fade-in"><strong>Config-driven automation:</strong> Convert a Jira ticket or plain-English requirement into a fully deployed analytical data pipeline with minimal manual coding.</li>
+      <li class="fade-in"><strong>Claude AI orchestration:</strong> Six specialized AI agents handle every SDLC stage &mdash; from requirement parsing to post-deploy validation.</li>
+      <li class="fade-in"><strong>Enterprise guardrails:</strong> Hooks, data contracts, reconciliation checks, and governance policies are enforced automatically at every stage.</li>
+      <li class="fade-in"><strong>Standardized &amp; reusable:</strong> A template-based project structure lets new teams bootstrap a production-ready pipeline in hours instead of weeks.</li>
+    </ul>
+    <div style="display:flex; gap:40px; margin-top:32px; justify-content:center;">
+      <div style="text-align:center;" class="fade-in"><span class="big-number">80%</span><br><span style="color:#888;font-size:0.85em;">Less Manual Code</span></div>
+      <div style="text-align:center;" class="fade-in"><span class="big-number">6</span><br><span style="color:#888;font-size:0.85em;">AI Agents</span></div>
+      <div style="text-align:center;" class="fade-in"><span class="big-number">8</span><br><span style="color:#888;font-size:0.85em;">Automated Stages</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 3: Problem Statement ═══════════════ -->
+<div class="slide" data-slide="3">
+  <div class="content">
+    <h2 class="fade-in">The Problem Today</h2>
+    <div class="two-col" style="margin-top:16px;">
+      <div class="card fade-in">
+        <h3 style="color:#f87171;">Manual Pipeline Development</h3>
+        <p>Each analytical data product is hand-coded from scratch. Weeks of developer time per pipeline with no reusable patterns.</p>
+      </div>
+      <div class="card fade-in">
+        <h3 style="color:#fbbf24;">Inconsistent Quality</h3>
+        <p>No standardized reconciliation, data quality checks, or data contracts. Bugs reach production undetected.</p>
+      </div>
+      <div class="card fade-in">
+        <h3 style="color:#fb923c;">Slow Time-to-Market</h3>
+        <p>Requirements → deployed pipeline takes 4-6 weeks. Manual handoffs between teams create bottlenecks.</p>
+      </div>
+      <div class="card fade-in">
+        <h3 style="color:#c084fc;">No Standardization</h3>
+        <p>Every team builds differently &mdash; different folder structures, naming conventions, CI/CD patterns, and monitoring approaches.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 4: Solution Overview ═══════════════ -->
+<div class="slide" data-slide="4">
+  <div class="content">
+    <h2 class="fade-in">The Solution: AI-Powered SDLC</h2>
+    <p class="fade-in" style="text-align:center; font-size:1.1em; color:#aaa; margin-bottom:24px;">Claude AI agents automate the entire lifecycle from requirement to deployed, validated pipeline.</p>
+    <div class="three-col">
+      <div class="card fade-in" style="text-align:center;">
+        <div style="font-size:2.2em; margin-bottom:8px;">&#128221;</div>
+        <h3>Intake &amp; Spec</h3>
+        <p>Jira ticket is parsed into a structured spec, published to Confluence automatically.</p>
+      </div>
+      <div class="card fade-in" style="text-align:center;">
+        <div style="font-size:2.2em; margin-bottom:8px;">&#9881;</div>
+        <h3>Config &amp; Code Gen</h3>
+        <p>A single YAML config drives generation of PySpark jobs, Step Functions, Terraform, and CI/CD configs.</p>
+      </div>
+      <div class="card fade-in" style="text-align:center;">
+        <div style="font-size:2.2em; margin-bottom:8px;">&#9989;</div>
+        <h3>Deploy &amp; Validate</h3>
+        <p>Automated deployment with reconciliation checks, data quality gates, and lineage tracking.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 5: Tech Stack ═══════════════ -->
+<div class="slide" data-slide="5">
+  <div class="content">
+    <h2 class="fade-in">Technology Stack</h2>
+    <div class="three-col" style="margin-top:12px;">
+      <div class="card fade-in">
+        <h3 style="color:#fbbf24;">AWS Data Platform</h3>
+        <ul>
+          <li>S3 &mdash; Data Lake storage</li>
+          <li>Glue &mdash; ETL jobs + Catalog</li>
+          <li>Apache Iceberg &mdash; Table format</li>
+          <li>Step Functions &mdash; Orchestration</li>
+          <li>Lambda &mdash; Event-driven helpers</li>
+          <li>CloudWatch &mdash; Monitoring</li>
+        </ul>
+      </div>
+      <div class="card fade-in">
+        <h3 style="color:#60a5fa;">Data &amp; CI/CD</h3>
+        <ul>
+          <li>Snowflake &mdash; Read-only source (OAuth + Proxy)</li>
+          <li>Jenkins &mdash; Build pipelines</li>
+          <li>Harness &mdash; Deployment orchestration</li>
+          <li>Jules &mdash; AI code review</li>
+          <li>Terraform &mdash; Infrastructure as Code</li>
+        </ul>
+      </div>
+      <div class="card fade-in">
+        <h3 style="color:#c084fc;">AI Layer (Claude)</h3>
+        <ul>
+          <li>Claude Code &mdash; AI engine</li>
+          <li>CLAUDE.md &mdash; Persistent guidance</li>
+          <li>Skills &mdash; Reusable capabilities</li>
+          <li>Subagents &mdash; Specialized agents</li>
+          <li>Hooks &mdash; Guardrails &amp; triggers</li>
+          <li>MCP &mdash; Jira + Confluence</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 6: E2E Architecture Flow ═══════════════ -->
+<div class="slide" data-slide="6">
+  <div class="content">
+    <h2 class="fade-in" style="text-align:center;">End-to-End Architecture Flow</h2>
+    <div class="flow fade-in" style="margin-top:12px;">
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">1</span>INTAKE</div>
+        <div class="flow-badges"><span class="badge badge-mcp">JIRA MCP</span><span class="badge badge-subagent">Req Parser</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">2</span>SPEC</div>
+        <div class="flow-badges"><span class="badge badge-mcp">Confluence</span><span class="badge badge-subagent">Spec Gen</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">3</span>CONFIG</div>
+        <div class="flow-badges"><span class="badge badge-skill">validate</span><span class="badge badge-hook">Pre-Config</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">4</span>CODE GEN</div>
+        <div class="flow-badges"><span class="badge badge-skill">gen-pipeline</span><span class="badge badge-hook">Lint Hook</span><span class="badge badge-subagent">Pipeline Gen</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">5</span>BUILD</div>
+        <div class="flow-badges"><span class="badge badge-claudemd">CLAUDE.md</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">6</span>DEPLOY</div>
+        <div class="flow-badges"><span class="badge badge-skill">gen-terraform</span><span class="badge badge-hook">Pre-Deploy</span><span class="badge badge-subagent">Infra Agent</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">7</span>VALIDATE</div>
+        <div class="flow-badges"><span class="badge badge-skill">run-recon</span><span class="badge badge-hook">Post-Deploy</span><span class="badge badge-subagent">QA Agent</span></div>
+      </div>
+      <div class="flow-arrow">&#8594;</div>
+      <div class="flow-stage">
+        <div class="flow-box"><span class="num">8</span>MONITOR</div>
+        <div class="flow-badges"><span class="badge badge-mcp">JIRA MCP</span></div>
+      </div>
+    </div>
+    <div style="display:flex; justify-content:center; gap:16px; margin-top:20px; flex-wrap:wrap;" class="fade-in">
+      <span class="badge badge-skill" style="font-size:0.8em;">Skill</span>
+      <span class="badge badge-subagent" style="font-size:0.8em;">Subagent</span>
+      <span class="badge badge-hook" style="font-size:0.8em;">Hook</span>
+      <span class="badge badge-mcp" style="font-size:0.8em;">MCP Server</span>
+      <span class="badge badge-claudemd" style="font-size:0.8em;">CLAUDE.md</span>
+    </div>
+    <p class="fade-in" style="text-align:center; margin-top:16px; font-size:0.85em; color:#777;">Agents communicate via S3 artifact store &mdash; no direct agent-to-agent calls. Orchestrated by Step Function / CLI driver.</p>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 7: Claude Features ═══════════════ -->
+<div class="slide" data-slide="7">
+  <div class="content">
+    <h2 class="fade-in">Claude Feature Map</h2>
+    <div class="two-col" style="margin-top:8px; gap:20px;">
+      <div class="card fade-in">
+        <h3><span class="badge badge-claudemd">CLAUDE.md</span> Persistent Instructions</h3>
+        <p>Two levels: <strong>Global</strong> (org-wide constraints: Snowflake read-only, naming conventions, proxy rules) and <strong>Repo-level</strong> (product-specific context, domain rules, available skills).</p>
+      </div>
+      <div class="card fade-in">
+        <h3><span class="badge badge-skill">Skills</span> Reusable Capabilities</h3>
+        <p>5 core skills in <code>.claude/skills/</code>, each as a <code>SKILL.md</code> with YAML frontmatter: <code>/generate-pipeline</code>, <code>/validate-config</code>, <code>/generate-terraform</code>, <code>/generate-step-function</code>, <code>/run-recon</code>. Invoked as slash commands.</p>
+      </div>
+      <div class="card fade-in">
+        <h3><span class="badge badge-subagent">Subagents</span> Specialized Agents</h3>
+        <p>6 agents defined in <code>.claude/agents/&lt;name&gt;/AGENT.md</code>, each with a single responsibility: Requirement Parser, Spec Generator, Config Generator, Pipeline Generator, Infra Agent, QA Agent. Auto-discovered by Claude Code.</p>
+      </div>
+      <div class="card fade-in">
+        <h3><span class="badge badge-hook">Hooks</span> Automated Guardrails</h3>
+        <p>4 hooks using <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>Stop</code> events in <code>.claude/settings.json</code>: config validation, code lint, Terraform plan check, post-deploy recon. Hooks receive JSON on stdin and return exit code 2 to block unsafe operations (exit 0 = allow).</p>
+      </div>
+      <div class="card fade-in" style="grid-column: span 2;">
+        <h3><span class="badge badge-mcp">MCP Servers</span> External Integrations (JIRA + Confluence Only)</h3>
+        <p>Configured in <code>.mcp.json</code> (project root). Single <code>atlassian</code> MCP provides both JIRA and Confluence tools. <strong>JIRA:</strong> Fetch tickets, add comments, transition status. <strong>Confluence:</strong> Create/update spec pages, publish runbooks. No other MCP servers allowed.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 8: Stage 1 - Intake ═══════════════ -->
+<div class="slide" data-slide="8">
+  <div class="content">
+    <h2 class="fade-in">Stage 1: Intake</h2>
+    <div class="two-col">
+      <div class="fade-in">
+        <h3>Input Sources</h3>
+        <ul>
+          <li>Jira ticket (via <span class="badge badge-mcp">JIRA MCP</span>)</li>
+          <li>Plain English requirement</li>
+          <li>Predefined spec file (.md / .yaml)</li>
+        </ul>
+        <h3 style="margin-top:20px;">Process</h3>
+        <ul>
+          <li>Fetch and parse ticket description</li>
+          <li>Extract: sources, transformations, target, schedule, quality expectations</li>
+          <li>Flag ambiguous fields as "assumptions"</li>
+          <li>Comment on Jira if clarification needed</li>
+        </ul>
+      </div>
+      <div class="fade-in">
+        <h3>Claude Features Used</h3>
+        <p style="margin-bottom:12px;">
+          <span class="badge badge-subagent">Requirement Parser Agent</span>
+          <span class="badge badge-mcp">JIRA MCP</span>
+          <span class="badge badge-claudemd">CLAUDE.md</span>
+        </p>
+        <h3>Output</h3>
+        <div style="background:rgba(0,0,0,0.3); border-radius:8px; padding:14px; font-family:monospace; font-size:0.78em; color:#4ade80; line-height:1.6;">
+          <pre>{
+  "ticket_key": "SCRUM-4",
+  "product_name": "monthly_revenue_by_category",
+  "domain": "sales_analytics",
+  "sources": [...],
+  "transformations": {...},
+  "target": {...},
+  "schedule": { "cron": "0 6 * * *" }
+}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 9: Stage 2 - Spec ═══════════════ -->
+<div class="slide" data-slide="9">
+  <div class="content">
+    <h2 class="fade-in">Stage 2: Specification</h2>
+    <div class="two-col">
+      <div class="fade-in">
+        <h3>What Happens</h3>
+        <ul>
+          <li>Requirements JSON enriched with technical details</li>
+          <li>Snowflake table metadata resolved</li>
+          <li>Join strategy determined (broadcast vs shuffle)</li>
+          <li>Iceberg table schema defined (columns, types, partitions)</li>
+          <li>Reconciliation approach specified</li>
+          <li>Glue job sizing calculated</li>
+        </ul>
+      </div>
+      <div class="fade-in">
+        <h3>Claude Features</h3>
+        <p style="margin-bottom:12px;">
+          <span class="badge badge-subagent">Spec Generator Agent</span>
+          <span class="badge badge-mcp">Confluence MCP</span>
+          <span class="badge badge-mcp">JIRA MCP</span>
+        </p>
+        <h3>Outputs</h3>
+        <ul>
+          <li><strong>02-spec.json</strong> &mdash; Technical specification</li>
+          <li><strong>Confluence page</strong> &mdash; Human-readable spec published automatically</li>
+          <li><strong>Jira comment</strong> &mdash; Link to Confluence spec added to ticket</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 10: Stage 3 - Config ═══════════════ -->
+<div class="slide" data-slide="10">
+  <div class="content">
+    <h2 class="fade-in">Stage 3: Configuration</h2>
+    <p class="fade-in" style="text-align:center; color:#aaa; margin-bottom:20px;">One YAML config drives the entire pipeline &mdash; sources, transforms, target, reconciliation, runtime.</p>
+    <div class="two-col">
+      <div class="fade-in">
+        <h3>Config Schema (Key Sections)</h3>
+        <table>
+          <tr><th>Section</th><th>Purpose</th></tr>
+          <tr><td><code>product</code></td><td>Name, domain, owner, version, schedule</td></tr>
+          <tr><td><code>sources</code></td><td>Snowflake tables, columns, filters, OAuth config</td></tr>
+          <tr><td><code>transformations</code></td><td>Joins, aggregations, filters, column mappings</td></tr>
+          <tr><td><code>target</code></td><td>Iceberg table, S3 path, write mode, partitions</td></tr>
+          <tr><td><code>reconciliation</code></td><td>Row count, sum, null checks with tolerances</td></tr>
+          <tr><td><code>data_quality</code></td><td>Not-null, unique, range, regex checks</td></tr>
+          <tr><td><code>runtime</code></td><td>Glue version, workers, timeout, Spark configs</td></tr>
+        </table>
+      </div>
+      <div class="fade-in">
+        <h3>Claude Features</h3>
+        <p style="margin-bottom:12px;">
+          <span class="badge badge-subagent">Config Generator Agent</span>
+          <span class="badge badge-skill">validate-config</span>
+          <span class="badge badge-hook">pre-config-validation</span>
+        </p>
+        <h3>Guardrails</h3>
+        <ul>
+          <li>Schema validation against JSON Schema</li>
+          <li>Hook blocks any Snowflake write operations</li>
+          <li>Auto-retry validation up to 3 times</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 11: Stage 4 - Code Gen ═══════════════ -->
+<div class="slide" data-slide="11">
+  <div class="content">
+    <h2 class="fade-in">Stage 4: Code Generation</h2>
+    <div class="two-col">
+      <div class="fade-in">
+        <h3>What Gets Generated</h3>
+        <ul>
+          <li><strong>PySpark Glue Job</strong> &mdash; Full ETL with Snowflake reads (OAuth+proxy), joins, aggregations, Iceberg writes</li>
+          <li><strong>Step Function (ASL)</strong> &mdash; Orchestration with retry logic, error handling, SNS notifications</li>
+          <li><strong>Lambda Functions</strong> &mdash; Reconciliation checker, trigger handler, notifications</li>
+          <li><strong>Unit Test Stubs</strong> &mdash; pytest scaffolding for each job</li>
+        </ul>
+        <h3 style="margin-top:16px;">Template Library</h3>
+        <ul>
+          <li><code>glue_job_boilerplate.py</code></li>
+          <li><code>snowflake_reader.py</code> (OAuth + proxy)</li>
+          <li><code>iceberg_writer.py</code></li>
+          <li><code>reconciliation.py</code></li>
+        </ul>
+      </div>
+      <div class="fade-in">
+        <h3>Claude Features</h3>
+        <p style="margin-bottom:12px;">
+          <span class="badge badge-subagent">Pipeline Generator Agent</span>
+          <span class="badge badge-skill">generate-pipeline</span>
+          <span class="badge badge-skill">generate-step-function</span>
+          <span class="badge badge-hook">post-codegen-lint</span>
+          <span class="badge badge-claudemd">CLAUDE.md</span>
+        </p>
+        <h3>Quality Gates</h3>
+        <ul>
+          <li>flake8 linting (max line 120)</li>
+          <li>bandit security scanning</li>
+          <li>Auto-fix common lint issues, retry</li>
+          <li>Security scan failure halts pipeline</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 12: Build & Deploy ═══════════════ -->
+<div class="slide" data-slide="12">
+  <div class="content">
+    <h2 class="fade-in">Stages 5 & 6: Build & Deploy</h2>
+    <div class="pipeline-flow fade-in" style="margin-bottom:24px;">
+      <div class="pipe-box pipe-action">Code Gen</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box pipe-action">Git Push</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box pipe-action">Jenkins Build</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box pipe-dev">DEV Deploy</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box pipe-staging">STAGING</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box" style="background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#c084fc;">Approval</div><div class="pipe-arrow">&#8594;</div>
+      <div class="pipe-box pipe-prod">PROD Deploy</div>
+    </div>
+    <div class="two-col">
+      <div class="card fade-in">
+        <h3>CI/CD Pipeline</h3>
+        <ul>
+          <li><strong>Jenkins:</strong> Build, lint, unit test, package artifacts</li>
+          <li><strong>Harness:</strong> DEV &rarr; STAGING &rarr; PROD with approval gates</li>
+          <li><strong>Jules:</strong> AI-assisted code review on PRs</li>
+        </ul>
+      </div>
+      <div class="card fade-in">
+        <h3>Infrastructure (Terraform)</h3>
+        <p style="margin-bottom:8px;">
+          <span class="badge badge-subagent">Infra Agent</span>
+          <span class="badge badge-skill">generate-terraform</span>
+          <span class="badge badge-hook">pre-deploy</span>
+        </p>
+        <ul>
+          <li>Glue jobs, S3 buckets, IAM roles</li>
+          <li>Step Functions, Lambdas, CloudWatch alarms</li>
+          <li>Terraform plan safety check before apply</li>
+          <li>Destructive changes require manual approval</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 13: Validate & Monitor ═══════════════ -->
+<div class="slide" data-slide="13">
+  <div class="content">
+    <h2 class="fade-in">Stages 7 & 8: Validate & Monitor</h2>
+    <div class="two-col">
+      <div class="card fade-in">
+        <h3>Validation (QA Agent)</h3>
+        <p style="margin-bottom:8px;">
+          <span class="badge badge-subagent">QA Agent</span>
+          <span class="badge badge-skill">run-recon</span>
+          <span class="badge badge-hook">post-deploy</span>
+        </p>
+        <ul>
+          <li><strong>Reconciliation:</strong> Source vs target row counts, sums, distinct counts with configurable tolerances</li>
+          <li><strong>Data Quality:</strong> Null checks, uniqueness, range validations, regex patterns</li>
+          <li><strong>Auto-report:</strong> Results posted to Jira ticket &amp; Confluence</li>
+          <li><strong>Auto-transition:</strong> Jira ticket moved to "Done" or "Failed"</li>
+        </ul>
+      </div>
+      <div class="card fade-in">
+        <h3>Monitoring (Post-Deploy)</h3>
+        <p style="margin-bottom:8px;">
+          <span class="badge badge-mcp">JIRA MCP</span>
+          <span class="badge badge-claudemd">CLAUDE.md</span>
+        </p>
+        <ul>
+          <li><strong>CloudWatch:</strong> Glue job metrics, Lambda errors, custom dashboards</li>
+          <li><strong>SNS Alerts:</strong> Pipeline success/failure notifications</li>
+          <li><strong>Lineage:</strong> Static (config-derived) + runtime (Spark job metadata)</li>
+          <li><strong>SLA Tracking:</strong> Pipeline execution time vs configured thresholds</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 14: Agent Architecture ═══════════════ -->
+<div class="slide" data-slide="14">
+  <div class="content">
+    <h2 class="fade-in">Agent Architecture</h2>
+    <p class="fade-in" style="text-align:center; color:#888; margin-bottom:16px;">Orchestrator triggers each agent sequentially. Agents share data via S3 artifacts.</p>
+    <div class="agent-grid fade-in">
+      <div class="agent-card">
+        <div class="agent-icon">&#128270;</div>
+        <h4>Requirement Parser</h4>
+        <p>Jira &rarr; structured JSON</p>
+        <span class="badge badge-mcp" style="font-size:0.65em;">JIRA MCP</span>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#128196;</div>
+        <h4>Spec Generator</h4>
+        <p>Requirements &rarr; tech spec + Confluence</p>
+        <span class="badge badge-mcp" style="font-size:0.65em;">Confluence MCP</span>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#128295;</div>
+        <h4>Config Generator</h4>
+        <p>Spec &rarr; validated YAML config</p>
+        <span class="badge badge-skill" style="font-size:0.65em;">validate-config</span>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#128187;</div>
+        <h4>Pipeline Generator</h4>
+        <p>Config &rarr; PySpark, Step Fns, Lambdas</p>
+        <span class="badge badge-skill" style="font-size:0.65em;">generate-pipeline</span>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#9729;&#65039;</div>
+        <h4>Infra Agent</h4>
+        <p>Config &rarr; Terraform modules</p>
+        <span class="badge badge-skill" style="font-size:0.65em;">generate-terraform</span>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon">&#9989;</div>
+        <h4>QA Agent</h4>
+        <p>Pipeline output &rarr; validation report</p>
+        <span class="badge badge-skill" style="font-size:0.65em;">run-recon</span>
+      </div>
+    </div>
+    <div class="fade-in" style="text-align:center; margin-top:16px; padding:12px; background:rgba(255,255,255,0.03); border-radius:8px;">
+      <span style="color:#00d2ff; font-weight:600;">Shared Artifact Store:</span>
+      <code style="color:#888; font-size:0.85em;"> s3://adp-artifacts/{run_id}/01-requirements.json &rarr; 02-spec.json &rarr; 03-config.yaml &rarr; 04-code/ &rarr; 05-infra/ &rarr; 06-report.json</code>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 15: Config-Driven Framework ═══════════════ -->
+<div class="slide" data-slide="15">
+  <div class="content">
+    <h2 class="fade-in">Config-Driven Framework</h2>
+    <p class="fade-in" style="text-align:center; color:#aaa; margin-bottom:16px;">A single YAML configuration file is the source of truth for every data product.</p>
+    <div class="three-col fade-in" style="gap:16px;">
+      <div class="card" style="border-left:3px solid #4ade80;">
+        <h3 style="color:#4ade80;">Sources</h3>
+        <p>Snowflake tables with OAuth + proxy config, column selection, filters</p>
+      </div>
+      <div class="card" style="border-left:3px solid #60a5fa;">
+        <h3 style="color:#60a5fa;">Transformations</h3>
+        <p>Joins (inner/left/right/full), aggregations (sum/count/avg), column mappings, custom SQL</p>
+      </div>
+      <div class="card" style="border-left:3px solid #c084fc;">
+        <h3 style="color:#c084fc;">Target</h3>
+        <p>Iceberg table via Glue Catalog, S3 path, write mode, partition spec, sort order</p>
+      </div>
+      <div class="card" style="border-left:3px solid #fbbf24;">
+        <h3 style="color:#fbbf24;">Reconciliation</h3>
+        <p>Row count, sum, distinct count, null checks with configurable tolerance %</p>
+      </div>
+      <div class="card" style="border-left:3px solid #f87171;">
+        <h3 style="color:#f87171;">Data Quality</h3>
+        <p>Not-null, uniqueness, range, regex, custom checks per column</p>
+      </div>
+      <div class="card" style="border-left:3px solid #fb923c;">
+        <h3 style="color:#fb923c;">Runtime</h3>
+        <p>Glue 4.0, worker type/count, timeout, Spark configs, tags</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 16: Code Gen Detail ═══════════════ -->
+<div class="slide" data-slide="16">
+  <div class="content">
+    <h2 class="fade-in">Code Generation: Template + Skill Approach</h2>
+    <div class="two-col" style="margin-top:12px;">
+      <div class="fade-in">
+        <h3>Template Library</h3>
+        <div style="background:rgba(0,0,0,0.3); border-radius:8px; padding:16px; font-family:monospace; font-size:0.78em; color:#a0a0d0; line-height:1.7;">
+          templates/<br>
+          &nbsp;&nbsp;<span style="color:#4ade80;">glue_job_boilerplate.py</span> &mdash; Spark/Glue init, logging, error handling<br>
+          &nbsp;&nbsp;<span style="color:#60a5fa;">snowflake_reader.py</span> &nbsp;&nbsp;&mdash; OAuth token fetch, proxy setup, read<br>
+          &nbsp;&nbsp;<span style="color:#c084fc;">iceberg_writer.py</span> &nbsp;&nbsp;&nbsp;&mdash; Glue Catalog write, partitioning<br>
+          &nbsp;&nbsp;<span style="color:#fbbf24;">reconciliation.py</span> &nbsp;&nbsp;&mdash; Source vs target comparison checks
+        </div>
+        <h3 style="margin-top:16px;">How It Works</h3>
+        <ol style="padding-left:20px;">
+          <li style="padding:4px 0;">Skill reads the config YAML</li>
+          <li style="padding:4px 0;">Templates are composed based on config structure</li>
+          <li style="padding:4px 0;">Claude fills in business logic (joins, aggs, filters)</li>
+          <li style="padding:4px 0;">Output: complete, runnable PySpark job</li>
+        </ol>
+      </div>
+      <div class="fade-in">
+        <h3>Snowflake Connection Pattern</h3>
+        <div style="background:rgba(0,0,0,0.3); border-radius:8px; padding:14px; font-family:monospace; font-size:0.72em; color:#4ade80; line-height:1.6;">
+<pre style="margin:0;">
+# 1. Set proxy env vars
+os.environ["http_proxy"] = proxy_url
+os.environ["https_proxy"] = proxy_url
+
+# 2. Fetch OAuth token from Secrets Manager
+secret = secretsmanager.get_secret_value(
+  SecretId="adp/snowflake/.../oauth"
+)
+token = json.loads(secret)["access_token"]
+
+# 3. Read via Spark Snowflake connector
+df = spark.read \
+  .format("net.snowflake.spark.snowflake") \
+  .options(authenticator="oauth",
+           token=token,
+           use_proxy="true") \
+  .load()
+</pre>
+        </div>
+        <p style="margin-top:12px; font-size:0.85em; color:#f87171; font-weight:600;">Snowflake is READ-ONLY. CLAUDE.md + hooks enforce this at every stage.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 17: CI/CD Pipeline ═══════════════ -->
+<div class="slide" data-slide="17">
+  <div class="content">
+    <h2 class="fade-in">CI/CD Integration</h2>
+    <div class="fade-in">
+      <table>
+        <tr><th>Stage</th><th>Tool</th><th>Actions</th><th>Gate</th></tr>
+        <tr><td>Build</td><td>Jenkins</td><td>Lint, unit test, package, upload to S3</td><td>All tests pass</td></tr>
+        <tr><td>DEV Deploy</td><td>Harness</td><td>Terraform apply, deploy Glue job, run pipeline</td><td>Recon checks pass</td></tr>
+        <tr><td>STAGING Deploy</td><td>Harness</td><td>Same as DEV with production-like data sample</td><td>Recon + data quality pass</td></tr>
+        <tr><td>Code Review</td><td>Jules</td><td>AI-assisted review of generated code</td><td>No critical findings</td></tr>
+        <tr><td>PROD Approval</td><td>Harness</td><td>Manual approval gate</td><td>Architecture sign-off</td></tr>
+        <tr><td>PROD Deploy</td><td>Harness + Terraform</td><td>Blue/green deploy, recon, notify</td><td>All recon rules pass</td></tr>
+      </table>
+    </div>
+    <div class="fade-in" style="margin-top:20px; text-align:center;">
+      <p style="color:#888; font-size:0.9em;">Validation report auto-posted to Jira ticket at each environment promotion.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 18: Terraform / Infra ═══════════════ -->
+<div class="slide" data-slide="18">
+  <div class="content">
+    <h2 class="fade-in">Terraform / Infrastructure</h2>
+    <div class="two-col" style="margin-top:12px;">
+      <div class="fade-in">
+        <h3>Platform-Level (Shared)</h3>
+        <ul>
+          <li>VPC, subnets, security groups</li>
+          <li>S3 buckets (data lake)</li>
+          <li>Glue Catalog databases</li>
+          <li>IAM base roles &amp; policies</li>
+          <li>Secrets Manager (Snowflake OAuth)</li>
+          <li>SNS topics, CloudWatch dashboards</li>
+        </ul>
+        <h3 style="margin-top:16px;">Module Structure</h3>
+        <div style="font-family:monospace; font-size:0.78em; color:#a0a0d0; line-height:1.7;">
+          terraform/modules/<br>
+          &nbsp;&nbsp;glue_job/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Job definition + IAM<br>
+          &nbsp;&nbsp;step_function/ &mdash; State machine + IAM<br>
+          &nbsp;&nbsp;iceberg_table/ &mdash; Catalog table + S3<br>
+          &nbsp;&nbsp;iam/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Roles &amp; policies<br>
+          &nbsp;&nbsp;monitoring/ &nbsp;&nbsp;&mdash; Alarms &amp; dashboards
+        </div>
+      </div>
+      <div class="fade-in">
+        <h3>Product-Level (Per Data Product)</h3>
+        <ul>
+          <li>Glue Job definition (PySpark script)</li>
+          <li>Step Function state machine</li>
+          <li>Lambda functions (recon, trigger)</li>
+          <li>Iceberg table in Glue Catalog</li>
+          <li>S3 prefix for data + metadata</li>
+          <li>EventBridge rule (scheduled trigger)</li>
+          <li>CloudWatch log groups + alarms</li>
+          <li>Product-specific IAM roles</li>
+        </ul>
+        <p style="margin-top:12px; font-size:0.85em; color:#aaa;">Each environment (dev/staging/prod) gets its own <code>main.tf</code> with module invocations and environment-specific <code>terraform.tfvars</code>.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 19: Governance ═══════════════ -->
+<div class="slide" data-slide="19">
+  <div class="content">
+    <h2 class="fade-in">Governance & Data Mesh Alignment</h2>
+    <div class="two-col" style="margin-top:12px;">
+      <div class="fade-in">
+        <h3>Data Contracts</h3>
+        <ul>
+          <li>Schema definition (columns, types, nullable)</li>
+          <li>SLA guarantees (freshness, completeness)</li>
+          <li>Quality thresholds (null rates, uniqueness)</li>
+          <li>Versioned &amp; published to Confluence</li>
+        </ul>
+        <h3 style="margin-top:16px;">Lineage & Observability</h3>
+        <ul>
+          <li><strong>Static lineage:</strong> Config-derived source &rarr; target mappings</li>
+          <li><strong>Runtime lineage:</strong> Spark job metadata, execution logs</li>
+          <li>Correlation IDs across all pipeline stages</li>
+          <li>CloudWatch dashboards per product</li>
+        </ul>
+      </div>
+      <div class="fade-in">
+        <h3>Ownership Boundaries</h3>
+        <table>
+          <tr><th>Role</th><th>Responsibility</th></tr>
+          <tr><td>Platform Team</td><td>Templates, shared infra, Claude framework, MCP config</td></tr>
+          <tr><td>Product Owner</td><td>Config YAML, business logic, data quality rules</td></tr>
+          <tr><td>Consumer</td><td>Reads Iceberg tables, provides feedback on SLA/quality</td></tr>
+        </table>
+        <h3 style="margin-top:16px;">Access Control</h3>
+        <ul>
+          <li>Separate AWS accounts per producer</li>
+          <li>IAM roles scoped to product S3 prefix</li>
+          <li>Snowflake role-based access (read-only)</li>
+          <li>Secrets Manager for credentials</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 20: Project Template ═══════════════ -->
+<div class="slide" data-slide="20">
+  <div class="content">
+    <h2 class="fade-in">Standardized Project Template</h2>
+    <p class="fade-in" style="text-align:center; color:#aaa; margin-bottom:16px;">Every new analytical data product starts from this template. Bootstrap in minutes.</p>
+    <div class="two-col">
+      <div class="tree fade-in">
+        <span class="folder">analytical-data-product/</span><br>
+        &#9500;&#9472; <span class="highlight">CLAUDE.md</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Product-level AI instructions<br>
+        &#9500;&#9472; <span class="highlight">.mcp.json</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; MCP config (Atlassian only)<br>
+        &#9500;&#9472; <span class="folder">.claude/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Claude Code configuration<br>
+        &#9474;&nbsp; &#9500;&#9472; settings.json &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Hooks (shared)<br>
+        &#9474;&nbsp; &#9500;&#9472; <span class="folder">skills/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; <span class="highlight">5 skills (each has SKILL.md)</span><br>
+        &#9474;&nbsp; &#9474;&nbsp; &#9500;&#9472; <span class="folder">generate-pipeline/</span>SKILL.md<br>
+        &#9474;&nbsp; &#9474;&nbsp; &#9500;&#9472; <span class="folder">validate-config/</span>SKILL.md<br>
+        &#9474;&nbsp; &#9474;&nbsp; &#9500;&#9472; <span class="folder">generate-terraform/</span>SKILL.md<br>
+        &#9474;&nbsp; &#9474;&nbsp; &#9500;&#9472; <span class="folder">generate-step-function/</span>SKILL.md<br>
+        &#9474;&nbsp; &#9474;&nbsp; &#9492;&#9472; <span class="folder">run-recon/</span>SKILL.md<br>
+        &#9474;&nbsp; &#9492;&#9472; <span class="folder">agents/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; <span class="highlight">6 agents (each has AGENT.md)</span><br>
+        &#9500;&#9472; <span class="folder">configs/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Pipeline YAML configs<br>
+        &#9500;&#9472; <span class="folder">templates/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; PySpark code templates<br>
+        &#9500;&#9472; <span class="folder">hooks/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Validation shell scripts<br>
+        &#9500;&#9472; <span class="folder">pipelines/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Generated output (per product)<br>
+        &#9500;&#9472; <span class="folder">terraform/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; IaC modules + environments<br>
+        &#9500;&#9472; <span class="folder">tests/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Unit &amp; integration tests<br>
+        &#9492;&#9472; <span class="folder">examples/</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&mdash; Reference implementations
+      </div>
+      <div class="fade-in">
+        <h3>Bootstrap Flow</h3>
+        <ol style="padding-left:20px;">
+          <li style="padding:6px 0;">Clone template repo</li>
+          <li style="padding:6px 0;">Update <code>CLAUDE.md</code> with product context</li>
+          <li style="padding:6px 0;">Create config YAML (or let Claude generate from Jira ticket)</li>
+          <li style="padding:6px 0;">Run Claude: it generates all code, infra, tests</li>
+          <li style="padding:6px 0;">Push to Git &rarr; CI/CD takes over</li>
+        </ol>
+        <div class="card" style="margin-top:20px; border-left:3px solid #4ade80;">
+          <h3 style="color:#4ade80;">Key Benefit</h3>
+          <p>New teams don't start from scratch. Every pipeline follows the same structure, conventions, and quality standards.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 21: Example Walkthrough ═══════════════ -->
+<div class="slide" data-slide="21">
+  <div class="content">
+    <h2 class="fade-in">Example: Monthly Revenue by Product Category</h2>
+    <p class="fade-in" style="text-align:center; color:#aaa; margin-bottom:16px;">Join customer_orders + product_catalog from Snowflake, aggregate monthly revenue, write to Iceberg.</p>
+    <div class="wt-steps fade-in">
+      <div class="wt-step">
+        <div class="wt-num">1</div>
+        <div><h4>Intake</h4><p>JIRA MCP fetches SCRUM-4. Parser extracts 2 sources, 1 join, 4 aggregations, daily schedule.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">2</div>
+        <div><h4>Spec</h4><p>Spec Generator enriches with Iceberg schema, G.2X workers, recon rules. Publishes to Confluence.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">3</div>
+        <div><h4>Config</h4><p>150-line YAML generated. Validated against schema. Hook confirms no Snowflake writes.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">4</div>
+        <div><h4>Code Gen</h4><p>PySpark Glue job (200 lines), Step Function ASL, recon Lambda generated. Linted and scanned.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">5</div>
+        <div><h4>Build</h4><p>Jenkins packages artifacts, runs unit tests, uploads to S3.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">6</div>
+        <div><h4>Deploy</h4><p>Terraform creates Glue job, Step Function, Lambda, EventBridge rule. DEV &rarr; STAGING &rarr; PROD.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">7</div>
+        <div><h4>Validate</h4><p>Recon: total_revenue within 0.01%, row counts match exactly, no null categories. All PASS.</p></div>
+      </div>
+      <div class="wt-step">
+        <div class="wt-num">8</div>
+        <div><h4>Monitor</h4><p>Jira ticket transitioned to Done. CloudWatch dashboard live. Runs daily at 6 AM UTC.</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 22: Benefits & ROI ═══════════════ -->
+<div class="slide" data-slide="22">
+  <div class="content">
+    <h2 class="fade-in">Benefits & ROI</h2>
+    <div class="three-col" style="margin-top:12px;">
+      <div class="card fade-in" style="text-align:center; border-top:3px solid #4ade80;">
+        <div class="big-number" style="font-size:2.2em;">10x</div>
+        <h3>Faster Delivery</h3>
+        <p>Weeks &rarr; hours. From Jira ticket to deployed pipeline in a single session.</p>
+      </div>
+      <div class="card fade-in" style="text-align:center; border-top:3px solid #60a5fa;">
+        <div class="big-number" style="font-size:2.2em;">80%</div>
+        <h3>Less Manual Code</h3>
+        <p>Templates + Skills generate production-ready code. Engineers focus on business logic review.</p>
+      </div>
+      <div class="card fade-in" style="text-align:center; border-top:3px solid #c084fc;">
+        <div class="big-number" style="font-size:2.2em;">100%</div>
+        <h3>Standardized</h3>
+        <p>Every pipeline follows the same structure, quality checks, and governance patterns.</p>
+      </div>
+    </div>
+    <div class="two-col fade-in" style="margin-top:20px;">
+      <div class="card">
+        <h3>Quality & Governance</h3>
+        <ul>
+          <li>Built-in reconciliation at every deployment</li>
+          <li>Data contracts auto-generated and published</li>
+          <li>Lineage tracking from source to target</li>
+          <li>Automated audit trail via Jira + Confluence</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Reusability & Scale</h3>
+        <ul>
+          <li>Template repo: new products bootstrap instantly</li>
+          <li>Skills are shared across all teams</li>
+          <li>Config-driven: changes don't require code rewrites</li>
+          <li>Supports enterprise-scale data volumes</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 23: Roadmap ═══════════════ -->
+<div class="slide" data-slide="23">
+  <div class="content">
+    <h2 class="fade-in">Implementation Roadmap</h2>
+    <div class="roadmap fade-in">
+      <div class="rm-phase">
+        <h4 style="color:#4ade80;">Phase 1: Foundation</h4>
+        <p style="color:#4ade80; font-size:0.75em; margin-bottom:8px;">Month 1-2</p>
+        <ul>
+          <li>Core framework setup</li>
+          <li>Template library (4 templates)</li>
+          <li>5 Skills + 6 Subagent definitions</li>
+          <li>CLAUDE.md (global + repo-level)</li>
+          <li>Hook scripts + registration</li>
+          <li>First pilot data product deployed</li>
+        </ul>
+      </div>
+      <div class="rm-phase">
+        <h4 style="color:#fbbf24;">Phase 2: Scale</h4>
+        <p style="color:#fbbf24; font-size:0.75em; margin-bottom:8px;">Month 3-4</p>
+        <ul>
+          <li>Expand template library</li>
+          <li>Onboard 5 data products</li>
+          <li>Refine config schema from feedback</li>
+          <li>Add advanced transformations</li>
+          <li>Harden CI/CD gates</li>
+          <li>Performance tuning for large datasets</li>
+        </ul>
+      </div>
+      <div class="rm-phase">
+        <h4 style="color:#c084fc;">Phase 3: Self-Service</h4>
+        <p style="color:#c084fc; font-size:0.75em; margin-bottom:8px;">Month 5-6</p>
+        <ul>
+          <li>Self-service onboarding portal</li>
+          <li>All teams using the framework</li>
+          <li>Cross-domain data products</li>
+          <li>Advanced lineage visualization</li>
+          <li>Automated SLA monitoring</li>
+          <li>Documentation &amp; training complete</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 24: Q&A ═══════════════ -->
+<div class="slide" data-slide="24">
+  <div class="content qa-center">
+    <h1 class="fade-in">Thank You</h1>
+    <p class="fade-in" style="font-size:1.3em; color:#c0c0ff; margin-bottom:24px;">Questions & Discussion</p>
+    <div class="fade-in" style="display:flex; gap:32px; justify-content:center; margin-top:24px;">
+      <div style="text-align:center;">
+        <div style="font-size:1.5em; margin-bottom:4px;">&#128196;</div>
+        <p style="font-size:0.85em;">Full plan:<br><code>AI_SDLC_Plan.md</code></p>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:1.5em; margin-bottom:4px;">&#127919;</div>
+        <p style="font-size:0.85em;">Jira Ticket:<br><code>SCRUM-4</code></p>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:1.5em; margin-bottom:4px;">&#128640;</div>
+        <p style="font-size:0.85em;">Template Repo:<br><code>analytical-data-product/</code></p>
+      </div>
+    </div>
+    <p class="fade-in" style="margin-top:40px; font-size:0.85em; color:#555;">AI SDLC for Analytical Data Products &bull; Data Mesh on AWS &bull; Powered by Anthropic Claude</p>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<script>
+(function() {
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+
+  const progress = document.getElementById('progress');
+  const counter = document.getElementById('counter');
+  const prevBtn = document.getElementById('navPrev');
+  const nextBtn = document.getElementById('navNext');
+
+  function updateSlide(dir) {
+    slides[current].classList.remove('active');
+    slides[current].classList.add(dir === 1 ? 'prev' : '');
+    current = Math.max(0, Math.min(total - 1, current + dir));
+    slides.forEach(s => s.classList.remove('prev'));
+    slides[current].classList.add('active');
+    progress.style.width = ((current + 1) / total * 100) + '%';
+    counter.textContent = (current + 1) + ' / ' + total;
+    prevBtn.style.opacity = current === 0 ? '0.3' : '1';
+    nextBtn.style.opacity = current === total - 1 ? '0.3' : '1';
+  }
+
+  function goTo(idx) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(total - 1, idx));
+    slides[current].classList.add('active');
+    progress.style.width = ((current + 1) / total * 100) + '%';
+    counter.textContent = (current + 1) + ' / ' + total;
+    prevBtn.style.opacity = current === 0 ? '0.3' : '1';
+    nextBtn.style.opacity = current === total - 1 ? '0.3' : '1';
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); updateSlide(1); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); updateSlide(-1); }
+    if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+    if (e.key === 'End') { e.preventDefault(); goTo(total - 1); }
+  });
+
+  prevBtn.addEventListener('click', () => updateSlide(-1));
+  nextBtn.addEventListener('click', () => updateSlide(1));
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; });
+  document.addEventListener('touchend', e => {
+    const diff = touchStartX - e.changedTouches[0].screenX;
+    if (Math.abs(diff) > 50) updateSlide(diff > 0 ? 1 : -1);
+  });
+
+  // Init
+  counter.textContent = '1 / ' + total;
+  progress.style.width = (1 / total * 100) + '%';
+  prevBtn.style.opacity = '0.3';
+})();
+</script>
+</body>
+</html>
