@@ -1,0 +1,217 @@
+# configs/monthly_revenue_by_category.yaml
+# Monthly Revenue by Product Category -- Analytical Data Product Pipeline Config
+#
+# Joins customer_orders and product_catalog from Snowflake, aggregates monthly
+# revenue by product category, and writes to an Iceberg table for downstream
+# consumption.
+
+product:
+  name: monthly_revenue_by_category
+  domain: sales_analytics
+  owner: sales-analytics-team@company.com
+  version: "1.0.0"
+  description: >
+    Joins customer_orders and product_catalog from Snowflake,
+    aggregates monthly revenue by product category, and writes
+    to an Iceberg table for downstream consumption.
+  tags:
+    cost_center: "CC-1234"
+    data_classification: "internal"
+    compliance: "SOX"
+  schedule:
+    frequency: daily
+    cron: "0 6 * * *"  # 6 AM UTC daily
+
+# Compute engine selection (glue | emr | lambda | ecs)
+compute:
+  engine: glue          # PySpark on AWS Glue
+  language: pyspark     # auto-derived from engine
+
+# ── Data Sources ─────────────────────────────────────────────────────
+
+sources:
+  - name: customer_orders
+    type: snowflake
+    connection:
+      account: company-prod.us-east-1
+      warehouse: ANALYTICS_WH
+      role: ADP_READER_ROLE
+      authenticator: oauth
+      proxy:
+        http_proxy: "http://corporate-proxy.company.com:8080"
+        https_proxy: "http://corporate-proxy.company.com:8080"
+    database: PROD_DB
+    schema: SALES
+    table: CUSTOMER_ORDERS
+    columns:
+      - order_id
+      - customer_id
+      - product_id
+      - order_date
+      - quantity
+      - unit_price
+      - total_amount
+      - order_status
+    filters:
+      - "order_status = 'COMPLETED'"
+      - "order_date >= DATEADD(month, -13, CURRENT_DATE())"
+
+  - name: product_catalog
+    type: snowflake
+    connection:
+      account: company-prod.us-east-1
+      warehouse: ANALYTICS_WH
+      role: ADP_READER_ROLE
+      authenticator: oauth
+      proxy:
+        http_proxy: "http://corporate-proxy.company.com:8080"
+        https_proxy: "http://corporate-proxy.company.com:8080"
+    database: PROD_DB
+    schema: PRODUCTS
+    table: PRODUCT_CATALOG
+    columns:
+      - product_id
+      - product_name
+      - category
+      - subcategory
+      - brand
+    filters: []
+
+# ── Transformations ──────────────────────────────────────────────────
+
+transformations:
+  joins:
+    - left: customer_orders
+      right: product_catalog
+      keys:
+        - left_key: product_id
+          right_key: product_id
+      type: inner
+
+  aggregations:
+    - group_by:
+        - "product_catalog.category"
+        - "DATE_TRUNC('month', customer_orders.order_date)"
+      metrics:
+        - column: "customer_orders.total_amount"
+          function: sum
+          alias: total_revenue
+        - column: "customer_orders.order_id"
+          function: count_distinct
+          alias: order_count
+        - column: "customer_orders.total_amount"
+          function: avg
+          alias: avg_order_value
+        - column: "customer_orders.quantity"
+          function: sum
+          alias: total_units_sold
+
+  column_mappings:
+    - source: "DATE_TRUNC('month', customer_orders.order_date)"
+      target: revenue_month
+      expression: "DATE_TRUNC('month', customer_orders.order_date)"
+    - source: "product_catalog.category"
+      target: product_category
+      expression: "product_catalog.category"
+
+  filters:
+    - "total_revenue > 0"
+
+# ── Target ───────────────────────────────────────────────────────────
+
+target:
+  catalog: glue_catalog
+  database: sales_analytics_monthly_revenue_prod
+  table: monthly_revenue_by_category
+  s3_path: "s3://sales-adp-prod/sales_analytics/monthly_revenue_by_category/data/"
+  format: iceberg
+  write_mode: overwrite
+  partition_by:
+    - revenue_month
+  sort_order:
+    - product_category
+  table_properties:
+    write.format.default: parquet
+    write.parquet.compression-codec: zstd
+    write.metadata.delete-after-commit.enabled: "true"
+    write.metadata.previous-versions-max: "10"
+
+# ── Reconciliation ───────────────────────────────────────────────────
+
+reconciliation:
+  enabled: true
+  rules:
+    - name: total_revenue_check
+      type: sum
+      source_expr: >
+        SELECT SUM(total_amount) FROM PROD_DB.SALES.CUSTOMER_ORDERS
+        WHERE order_status = 'COMPLETED'
+        AND order_date >= DATEADD(month, -13, CURRENT_DATE())
+      target_expr: >
+        SELECT SUM(total_revenue)
+        FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category
+      tolerance_pct: 0.01
+
+    - name: row_count_reasonableness
+      type: row_count
+      source_expr: >
+        SELECT COUNT(DISTINCT DATE_TRUNC('month', order_date) || '-' || p.category)
+        FROM PROD_DB.SALES.CUSTOMER_ORDERS o
+        INNER JOIN PROD_DB.PRODUCTS.PRODUCT_CATALOG p ON o.product_id = p.product_id
+        WHERE o.order_status = 'COMPLETED'
+        AND o.order_date >= DATEADD(month, -13, CURRENT_DATE())
+      target_expr: >
+        SELECT COUNT(*)
+        FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category
+      tolerance_pct: 0.0
+
+    - name: no_null_categories
+      type: null_check
+      source_expr: "N/A"
+      target_expr: >
+        SELECT COUNT(*) FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category
+        WHERE product_category IS NULL
+      tolerance_pct: 0.0
+
+# ── Data Quality ─────────────────────────────────────────────────────
+
+data_quality:
+  checks:
+    - name: revenue_positive
+      type: range
+      column: total_revenue
+      parameters:
+        min: 0
+    - name: category_not_null
+      type: not_null
+      column: product_category
+    - name: month_not_null
+      type: not_null
+      column: revenue_month
+    - name: order_count_positive
+      type: range
+      column: order_count
+      parameters:
+        min: 1
+
+# ── Runtime (Glue-specific) ─────────────────────────────────────────
+
+runtime:
+  glue_version: "4.0"
+  worker_type: G.2X
+  num_workers: 10
+  timeout_minutes: 120
+  max_concurrent_runs: 1
+  extra_py_files:
+    - "s3://sales-adp-prod/libs/adp_common-1.0.0-py3-none-any.whl"
+  extra_jars:
+    - "s3://sales-adp-prod/jars/iceberg-spark-runtime-3.3_2.12-1.4.2.jar"
+  job_parameters:
+    "--conf spark.sql.catalog.glue_catalog": "org.apache.iceberg.spark.SparkCatalog"
+    "--conf spark.sql.catalog.glue_catalog.warehouse": "s3://sales-adp-prod/sales_analytics/"
+    "--conf spark.sql.catalog.glue_catalog.catalog-impl": "org.apache.iceberg.aws.glue.GlueCatalog"
+    "--conf spark.sql.catalog.glue_catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO"
+  tags:
+    environment: prod
+    team: sales-analytics
+    cost_center: "CC-1234"
