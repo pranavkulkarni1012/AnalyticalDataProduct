@@ -51,6 +51,11 @@ variable "source_dir" {
   description = "Directory containing Lambda source code (for zip deployment)"
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.package_type != "Zip" || var.source_dir != ""
+    error_message = "source_dir must be set when package_type is 'Zip'."
+  }
 }
 
 variable "image_uri" {

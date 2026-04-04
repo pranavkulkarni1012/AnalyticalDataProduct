@@ -60,7 +60,6 @@ resource "aws_cloudwatch_metric_alarm" "job_failure" {
 
   dimensions = {
     JobName = var.glue_job_name
-    Type    = "gauge"
   }
 
   alarm_actions = [local.sns_topic_arn]

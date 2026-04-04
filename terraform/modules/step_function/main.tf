@@ -56,8 +56,7 @@ resource "aws_iam_role_policy" "sfn_execution" {
         Action = [
           "ecs:RunTask",
           "ecs:StopTask",
-          "ecs:DescribeTasks",
-          "iam:PassRole"
+          "ecs:DescribeTasks"
         ]
         Resource = "*"
         Condition = {
@@ -65,6 +64,11 @@ resource "aws_iam_role_policy" "sfn_execution" {
             "aws:RequestedRegion" = data.aws_region.current.name
           }
         }
+      },
+      {
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = var.ecs_task_role_arns
       },
       {
         Effect = "Allow"

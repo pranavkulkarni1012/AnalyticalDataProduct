@@ -19,12 +19,8 @@ resource "aws_glue_catalog_table" "iceberg_table" {
   database_name = aws_glue_catalog_database.product_db.name
   name          = var.table_name
 
-  table_type = "EXTERNAL_TABLE"
-
   parameters = {
-    "table_type"        = "ICEBERG"
     "metadata_location" = "${var.s3_path}metadata/"
-    "format-version"    = "2"
   }
 
   open_table_format_input {

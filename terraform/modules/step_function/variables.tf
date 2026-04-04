@@ -22,6 +22,11 @@ variable "definition_json" {
   description = "Inline ASL JSON definition (takes precedence over definition_file)"
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.definition_file != "" || var.definition_json != ""
+    error_message = "Either definition_file or definition_json must be provided."
+  }
 }
 
 variable "glue_job_name" {
@@ -32,6 +37,12 @@ variable "glue_job_name" {
 
 variable "lambda_arns" {
   description = "List of Lambda ARNs the state machine can invoke"
+  type        = list(string)
+  default     = []
+}
+
+variable "ecs_task_role_arns" {
+  description = "List of ECS task/execution role ARNs the state machine can pass"
   type        = list(string)
   default     = []
 }

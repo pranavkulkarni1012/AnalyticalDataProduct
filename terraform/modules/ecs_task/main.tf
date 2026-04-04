@@ -3,6 +3,8 @@
 # Creates a Fargate task definition, ECS service, and CloudWatch log group.
 # ──────────────────────────────────────────────────────────────────────────────
 
+data "aws_region" "current" {}
+
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = "/ecs/${var.task_family}"
   retention_in_days = var.log_retention_days
@@ -71,5 +73,3 @@ resource "aws_ecs_service" "service" {
 
   tags = var.tags
 }
-
-data "aws_region" "current" {}

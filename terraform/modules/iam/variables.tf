@@ -26,6 +26,11 @@ variable "s3_data_path" {
 variable "secrets_arn" {
   description = "ARN of the Secrets Manager secret (e.g., Snowflake OAuth)"
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws:secretsmanager:", var.secrets_arn))
+    error_message = "secrets_arn must be a valid Secrets Manager ARN."
+  }
 }
 
 variable "tags" {
