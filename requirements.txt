@@ -1,0 +1,12 @@
+# Core dependencies
+boto3>=1.28.0
+pyspark>=3.4.0
+pandas>=2.0.0
+pyyaml>=6.0
+jsonschema>=4.17.0
+snowflake-connector-python>=3.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+moto[secretsmanager,s3,glue,cloudwatch]>=4.2.0
