@@ -131,6 +131,7 @@ target:
   sort_order:
     - product_category
   table_properties:
+    format-version: "2"
     write.format.default: parquet
     write.parquet.compression-codec: zstd
     write.metadata.delete-after-commit.enabled: "true"
@@ -203,12 +204,12 @@ runtime:
   timeout_minutes: 120
   max_concurrent_runs: 1
   extra_py_files:
-    - "s3://sales-adp-prod/libs/adp_common-1.0.0-py3-none-any.whl"
+    - "s3://sales-analytics-adp-prod/libs/adp_common-1.0.0-py3-none-any.whl"
   extra_jars:
-    - "s3://sales-adp-prod/jars/iceberg-spark-runtime-3.3_2.12-1.4.2.jar"
+    - "s3://sales-analytics-adp-prod/jars/iceberg-spark-runtime-3.3_2.12-1.4.2.jar"
   job_parameters:
     "--conf spark.sql.catalog.glue_catalog": "org.apache.iceberg.spark.SparkCatalog"
-    "--conf spark.sql.catalog.glue_catalog.warehouse": "s3://sales-adp-prod/sales_analytics/"
+    "--conf spark.sql.catalog.glue_catalog.warehouse": "s3://sales-analytics-adp-prod/sales_analytics/"
     "--conf spark.sql.catalog.glue_catalog.catalog-impl": "org.apache.iceberg.aws.glue.GlueCatalog"
     "--conf spark.sql.catalog.glue_catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO"
   tags:

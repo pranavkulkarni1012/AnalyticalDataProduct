@@ -31,10 +31,10 @@ first.
 1. Read the pipeline config YAML from `$ARGUMENTS` or `configs/` directory.
 2. Extract `compute.engine`, `product.name`, `product.domain`.
 3. Derive naming conventions:
-   - Job name: `adp-{product.domain}-{product.name}-etl-prod`
-   - Recon Lambda: `adp-{product.name}-recon-{env}` (where `{env}` is passed via execution input `$.env`, defaulting to `prod`)
+   - Job name: `adp-{product.domain}-{product.name}-etl-{env}` (where `{env}` is passed via execution input `$.env`, defaulting to `prod`)
+   - Recon Lambda: `adp-{product.name}-recon-{env}`
    - SNS topic: Read from `notifications.sns_topic_arn` in the config if present.
-     If absent, use `adp-notifications-prod` as the topic name and construct
+     If absent, use `adp-{product.name}-alerts-{env}` as the topic name and construct
      the ARN as a Terraform variable reference `${var.sns_topic_arn}` to avoid
      hardcoding account IDs or region in the ASL file.
 
@@ -65,7 +65,7 @@ Generate the ASL JSON with the following states:
     {
       "JobName": "{job_name}",
       "Arguments": {
-        "--ENV": "prod",
+        "--ENV.$": "$.env",
         "--JOB_NAME": "{job_name}"
       }
     }
@@ -78,7 +78,7 @@ Generate the ASL JSON with the following states:
       "JobDriver": {
         "SparkSubmit": {
           "EntryPoint": "s3://{script_s3_path}/{product.name}_etl.py",
-          "EntryPointArguments": ["--env", "prod", "--job-name", "{job_name}"],
+          "EntryPointArguments.$": "States.Array('--env', $.env, '--job-name', '{job_name}')",
           "SparkSubmitParameters": "--conf spark.executor.instances=2"
         }
       }
@@ -95,7 +95,7 @@ Generate the ASL JSON with the following states:
     {
       "FunctionName": "{job_name}",
       "Payload": {
-        "env": "prod"
+        "env.$": "$.env"
       }
     }
     ```
@@ -108,7 +108,7 @@ Generate the ASL JSON with the following states:
       "Overrides": {
         "ContainerOverrides": [{
           "Name": "{product.name}-container",
-          "Command": ["python", "{product.name}_main.py", "--env", "prod"]
+          "Command.$": "States.Array('python', '{product.name}_main.py', '--env', $.env)"
         }]
       },
       "NetworkConfiguration": {
@@ -167,7 +167,7 @@ Generate the ASL JSON with the following states:
 - **Parameters**:
   ```json
   {
-    "FunctionName": "adp-{product.name}-recon-prod",
+    "FunctionName": "adp-{product.name}-recon-{env}",
     "Payload.$": "$"
   }
   ```

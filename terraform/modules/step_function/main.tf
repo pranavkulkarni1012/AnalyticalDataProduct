@@ -9,7 +9,7 @@ data "aws_caller_identity" "current" {}
 # ── IAM Role for Step Function Execution ─────────────────────────────────────
 
 resource "aws_iam_role" "sfn_execution" {
-  name = "adp-${var.product_name}-sfn-${var.environment}"
+  name = "adp-sfn-${var.domain}-${var.product_name}-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -117,7 +117,7 @@ resource "aws_cloudwatch_log_group" "sfn" {
 resource "aws_iam_role" "scheduler" {
   count = var.schedule_cron != "" ? 1 : 0
 
-  name = "adp-${var.product_name}-scheduler-${var.environment}"
+  name = "adp-scheduler-${var.domain}-${var.product_name}-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

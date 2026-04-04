@@ -19,7 +19,11 @@
 INPUT=$(cat)
 
 # Extract product name and environment from env vars or defaults
-PRODUCT_NAME="${ADP_PRODUCT_NAME:-monthly_revenue_by_category}"
+PRODUCT_NAME="${ADP_PRODUCT_NAME:-}"
+if [ -z "$PRODUCT_NAME" ]; then
+  echo "WARNING: ADP_PRODUCT_NAME not set, skipping recon." >&2
+  exit 0
+fi
 ENV="${ADP_ENV:-dev}"
 
 # Validate inputs

@@ -6,7 +6,7 @@
 data "aws_region" "current" {}
 
 resource "aws_cloudwatch_log_group" "ecs" {
-  name              = "/ecs/${var.task_family}"
+  name              = "/adp/${var.task_family}"
   retention_in_days = var.log_retention_days
 
   tags = var.tags

@@ -12,11 +12,17 @@ Used by both lambda_handler.py and ecs_entrypoint.py.
 import os
 import json
 import logging
+import re
 from urllib.parse import urlparse
 
 import boto3
 import snowflake.connector
 import pandas as pd
+
+_DISALLOWED_SQL = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE)\b",
+    re.IGNORECASE,
+)
 
 
 def setup_proxy(proxy_config, logger):
@@ -141,11 +147,6 @@ def build_source_query(source):
     # Filters come from the validated pipeline config YAML (not user input).
     # They are pre-validated by /validate-config against the JSON Schema.
     # We apply basic sanity checks here as defense-in-depth.
-    import re as _re
-    _DISALLOWED_SQL = _re.compile(
-        r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE)\b",
-        _re.IGNORECASE,
-    )
     filters = source.get("filters", [])
     safe_filters = []
     for f in filters:

@@ -231,7 +231,7 @@ Generated Modules:
   Common:
     - terraform/modules/iam/ (IAM roles and policies)
     - terraform/modules/step_function/ (Step Function state machine)
-    - terraform/modules/lambda/ (Reconciliation Lambda)
+    - terraform/modules/lambda/ (Lambda function)
     - terraform/modules/monitoring/ (CloudWatch, SNS, EventBridge)
 
   Engine-Specific:

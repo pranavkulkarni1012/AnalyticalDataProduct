@@ -341,6 +341,22 @@ data "aws_iam_policy_document" "lambda" {
     ]
     resources = [var.secrets_arn]
   }
+
+  statement {
+    sid    = "GlueCatalog"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartitions"
+    ]
+    resources = [
+      "arn:aws:glue:${local.region}:${local.account_id}:catalog",
+      "arn:aws:glue:${local.region}:${local.account_id}:database/*",
+      "arn:aws:glue:${local.region}:${local.account_id}:table/*/*"
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {

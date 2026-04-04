@@ -59,6 +59,12 @@ variable "schedule_cron" {
   default     = ""
 }
 
+variable "domain" {
+  description = "Business domain (e.g., sales_analytics)"
+  type        = string
+  default     = ""
+}
+
 variable "environment" {
   description = "Deployment environment (dev, staging, prod)"
   type        = string

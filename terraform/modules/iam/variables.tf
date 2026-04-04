@@ -33,8 +33,8 @@ variable "secrets_arn" {
   type        = string
 
   validation {
-    condition     = can(regex("^arn:aws:secretsmanager:", var.secrets_arn))
-    error_message = "secrets_arn must be a valid Secrets Manager ARN."
+    condition     = var.secrets_arn == "" || can(regex("^arn:aws:secretsmanager:", var.secrets_arn))
+    error_message = "secrets_arn must be empty or a valid Secrets Manager ARN."
   }
 }
 

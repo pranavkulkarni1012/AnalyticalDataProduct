@@ -89,7 +89,7 @@ Write `02-spec.json` with the following structure:
     "catalog": "glue_catalog",
     "database": "string",
     "table": "string",
-    "s3_path": "s3://adp-{domain}-{env}/{product_name}/",
+    "s3_path": "s3://{domain}-adp-{env}/{product_name}/",
     "write_mode": "overwrite|append",
     "schema": [{"name": "string", "type": "string", "nullable": true}],
     "partition_spec": [{"column": "string", "transform": "month|identity"}],

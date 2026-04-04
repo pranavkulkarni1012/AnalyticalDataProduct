@@ -19,8 +19,10 @@ if ! echo "$COMMAND" | grep -q 'terraform apply'; then
 fi
 
 # Extract terraform directory and environment from the command context
-TERRAFORM_DIR=$(echo "$COMMAND" | grep -oP '(?<=cd\s)[^\s;]+' || echo "terraform")
-ENV=$(echo "$COMMAND" | grep -oP '(?<=-var=.environment=)[^\s"]+' || echo "dev")
+TERRAFORM_DIR=$(echo "$COMMAND" | sed -n 's/.*cd[[:space:]]\+\([^[:space:];]*\).*/\1/p')
+TERRAFORM_DIR="${TERRAFORM_DIR:-terraform}"
+ENV=$(echo "$COMMAND" | sed -n 's/.*-var=.environment=\([^[:space:]"]*\).*/\1/p')
+ENV="${ENV:-dev}"
 
 # Validate environment against allowlist
 if [[ ! "$ENV" =~ ^(dev|staging|prod)$ ]]; then

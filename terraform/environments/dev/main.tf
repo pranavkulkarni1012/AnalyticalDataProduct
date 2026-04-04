@@ -154,6 +154,7 @@ module "step_function" {
   source = "../../modules/step_function"
 
   product_name       = var.product_name
+  domain             = var.domain
   state_machine_name = "adp-${var.domain}-${var.product_name}-${var.environment}"
   definition_file    = "${path.module}/../../../pipelines/${var.product_name}/step_functions/${var.product_name}_orchestrator.asl.json"
   glue_job_name      = var.compute_engine == "glue" ? module.glue_job[0].job_name : ""
@@ -171,6 +172,7 @@ module "monitoring" {
   source = "../../modules/monitoring"
 
   product_name        = var.product_name
+  domain              = var.domain
   environment         = var.environment
   glue_job_name       = var.compute_engine == "glue" ? module.glue_job[0].job_name : ""
   state_machine_arn   = module.step_function.state_machine_arn

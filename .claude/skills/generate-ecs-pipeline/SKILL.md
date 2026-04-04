@@ -75,8 +75,8 @@ def parse_args():
         default=os.environ.get("ENV", "prod"),
         help="Environment (dev/staging/prod)")
     parser.add_argument("--job-name",
-        default="adp-{product.domain}-{product.name}-etl-prod",
-        help="Job name for logging")
+        default=None,
+        help="Job name for logging (defaults to adp-{domain}-{product}-etl-{env})")
     args = parser.parse_args()
     return args
 ```
@@ -237,7 +237,6 @@ Engine: ecs
 Generated Files:
   1. pipelines/{product.name}/ecs_jobs/{product.name}_main.py (entrypoint)
   2. pipelines/{product.name}/ecs_jobs/Dockerfile
-  3. pipelines/{product.name}/ecs_jobs/requirements.txt
   3. pipelines/{product.name}/ecs_jobs/requirements.txt
 
 Key Differences from Lambda:

@@ -60,7 +60,7 @@ server and extract a structured requirement object.
     "aggregations": [
       {
         "group_by": ["string"],
-        "metrics": [{"column": "string", "function": "sum|count|avg|min|max", "alias": "string"}]
+        "metrics": [{"column": "string", "function": "sum|count|count_distinct|avg|min|max", "alias": "string"}]
       }
     ],
     "filters": ["string"],

@@ -77,7 +77,7 @@ transformations:
 
 target:
   catalog: glue_catalog
-  database: "adp_{spec.domain}"
+  database: "{spec.domain}_{spec.product_name}_{env}"
   table: "{spec.product_name}"
   s3_path: "s3://{spec.domain}-adp-{env}/{spec.product_name}/"  # {env} resolved from ENV variable or defaults to dev
   write_mode: "{spec.target.write_mode}"
@@ -100,13 +100,12 @@ Apply these defaults for fields not explicitly set in the spec:
 
 **Glue engine defaults:**
 - `runtime.glue_version`: `"4.0"`
-- `runtime.python_version`: `3`
 - `runtime.worker_type`: `"G.2X"`
 - `runtime.num_workers`: `10`
 - `runtime.timeout_minutes`: `120`
 
 **EMR engine defaults:**
-- `runtime.emr_release`: `"emr-7.0.0"`
+- `runtime.emr_release`: `"emr-6.15.0"`
 - `runtime.instance_type`: `"m5.2xlarge"`
 - `runtime.instance_count`: `3`
 - `runtime.timeout_minutes`: `180`

@@ -8,7 +8,7 @@ import json
 
 import boto3
 import pytest
-from moto import mock_secretsmanager
+from moto import mock_aws
 from pyspark.sql import SparkSession
 from pyspark.sql.types import (
     DateType,
@@ -150,7 +150,7 @@ def target_df(spark, joined_df):
 @pytest.fixture
 def mock_secrets_manager():
     """Mock AWS Secrets Manager with a test Snowflake OAuth secret."""
-    with mock_secretsmanager():
+    with mock_aws():
         client = boto3.client("secretsmanager", region_name="us-east-1")
         client.create_secret(
             Name="adp/snowflake/company-prod.us-east-1/oauth",
