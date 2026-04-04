@@ -164,12 +164,14 @@ pipeline:
                             -backend-config=backend-dev.hcl \
                             -input=false \
                             -reconfigure
-                          # Revert to the previous state
-                          terraform apply \
+                          # Rollback: re-apply using the previous artifact version's plan
+                          # NOTE: -refresh-only only syncs state, it does NOT revert resources.
+                          # For a true rollback, re-deploy the previous artifact version.
+                          terraform plan \
                             -var="product_name=<+pipeline.variables.product_name>" \
-                            -auto-approve \
                             -input=false \
-                            -refresh-only
+                            -out=rollback.tfplan
+                          terraform apply -auto-approve -input=false rollback.tfplan
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STAGE 2: Deploy to STAGING (lead-engineer approval, 24h timeout)
@@ -295,11 +297,14 @@ pipeline:
                             -backend-config=backend-staging.hcl \
                             -input=false \
                             -reconfigure
-                          terraform apply \
+                          # Rollback: re-apply using the previous artifact version's plan
+                          # NOTE: -refresh-only only syncs state, it does NOT revert resources.
+                          # For a true rollback, re-deploy the previous artifact version.
+                          terraform plan \
                             -var="product_name=<+pipeline.variables.product_name>" \
-                            -auto-approve \
                             -input=false \
-                            -refresh-only
+                            -out=rollback.tfplan
+                          terraform apply -auto-approve -input=false rollback.tfplan
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STAGE 3: Deploy to PROD (dual approval, 48h timeout)
@@ -328,6 +333,7 @@ pipeline:
                       Reconciliation checks passed. Artifact version: <+pipeline.variables.artifact_version>
                       Both data-platform-lead AND product-owner must approve for PROD deployment.
                     includePipelineExecutionHistory: true
+                    disallowPipelineExecutor: true
                     approvers:
                       userGroups:
                         - "data_platform_leads"
@@ -426,11 +432,14 @@ pipeline:
                             -backend-config=backend-prod.hcl \
                             -input=false \
                             -reconfigure
-                          terraform apply \
+                          # Rollback: re-apply using the previous artifact version's plan
+                          # NOTE: -refresh-only only syncs state, it does NOT revert resources.
+                          # For a true rollback, re-deploy the previous artifact version.
+                          terraform plan \
                             -var="product_name=<+pipeline.variables.product_name>" \
-                            -auto-approve \
                             -input=false \
-                            -refresh-only
+                            -out=rollback.tfplan
+                          terraform apply -auto-approve -input=false rollback.tfplan
 
                           # Post failure to Jira
                           python scripts/post_jira_comment.py \

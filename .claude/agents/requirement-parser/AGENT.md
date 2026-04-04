@@ -14,10 +14,13 @@ server and extract a structured requirement object.
 - Jira ticket key (e.g., SCRUM-4)
 
 ## Process
-1. Call `mcp__atlassian__getAccessibleAtlassianResources` to obtain the cloud ID.
-2. Call `mcp__atlassian__getJiraIssue` to fetch the ticket: title, description, acceptance
+1. Generate a `run_id` as a UUID4 string. This `run_id` is used as the namespace for all
+   downstream artifacts (`artifacts/{run_id}/01-requirements.json`, `02-spec.json`, etc.).
+   Include it in the output JSON so downstream agents can reference it.
+2. Call `mcp__atlassian__getAccessibleAtlassianResources` to obtain the cloud ID.
+3. Call `mcp__atlassian__getJiraIssue` to fetch the ticket: title, description, acceptance
    criteria, labels, and components.
-3. Parse the description to identify:
+4. Parse the description to identify:
    - Source datasets (name, system, database, schema, table)
    - Required transformations (joins, filters, aggregations, column mappings)
    - Target table details (domain, product name, table name)
@@ -25,11 +28,12 @@ server and extract a structured requirement object.
    - Schedule requirements (frequency, cron expression)
 4. If any required field is ambiguous or missing, add it to a `warnings` array and set the
    field to `null` in the output JSON.
-5. Produce a structured JSON output.
+6. Produce a structured JSON output.
 
 ## Output Schema
 ```json
 {
+  "run_id": "string (UUID4 -- generated at pipeline start, propagated to all stages)",
   "ticket_key": "string",
   "product_name": "string",
   "domain": "string",
@@ -56,7 +60,7 @@ server and extract a structured requirement object.
     "aggregations": [
       {
         "group_by": ["string"],
-        "metrics": [{"column": "string", "function": "sum|count|avg|min|max", "alias": "string"}]
+        "metrics": [{"column": "string", "function": "sum|count|count_distinct|avg|min|max", "alias": "string"}]
       }
     ],
     "filters": ["string"],

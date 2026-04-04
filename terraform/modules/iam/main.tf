@@ -15,7 +15,7 @@ locals {
 # ── Glue Execution Role ──────────────────────────────────────────────────────
 
 resource "aws_iam_role" "glue" {
-  name = "adp-${var.product_name}-glue-${var.environment}"
+  name = "adp-glue-${var.domain}-${var.product_name}-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -88,7 +88,10 @@ data "aws_iam_policy_document" "glue" {
       "logs:CreateLogStream",
       "logs:PutLogEvents"
     ]
-    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws-glue/*"]
+    resources = [
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws-glue/adp-${var.product_name}-*",
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws-glue/adp-${var.product_name}-*:log-stream:*"
+    ]
   }
 }
 
@@ -101,7 +104,7 @@ resource "aws_iam_role_policy" "glue" {
 # ── EMR Execution Role ───────────────────────────────────────────────────────
 
 resource "aws_iam_role" "emr" {
-  name = "adp-${var.product_name}-emr-${var.environment}"
+  name = "adp-emr-${var.domain}-${var.product_name}-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -171,7 +174,10 @@ data "aws_iam_policy_document" "emr" {
       "logs:CreateLogStream",
       "logs:PutLogEvents"
     ]
-    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/emr/*"]
+    resources = [
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/emr/adp-${var.product_name}-*",
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/emr/adp-${var.product_name}-*:log-stream:*"
+    ]
   }
 }
 
@@ -184,7 +190,7 @@ resource "aws_iam_role_policy" "emr" {
 # ── ECS Execution Role ───────────────────────────────────────────────────────
 
 resource "aws_iam_role" "ecs_task" {
-  name = "adp-${var.product_name}-ecs-task-${var.environment}"
+  name = "adp-ecs-${var.domain}-${var.product_name}-task-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -254,7 +260,7 @@ resource "aws_iam_role_policy" "ecs_task" {
 # ── ECS Task Execution Role ──────────────────────────────────────────────────
 
 resource "aws_iam_role" "ecs_execution" {
-  name = "adp-${var.product_name}-ecs-exec-${var.environment}"
+  name = "adp-ecs-${var.domain}-${var.product_name}-exec-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -280,7 +286,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
 # ── Lambda Execution Role ────────────────────────────────────────────────────
 
 resource "aws_iam_role" "lambda" {
-  name = "adp-${var.product_name}-lambda-${var.environment}"
+  name = "adp-lambda-${var.domain}-${var.product_name}-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -307,7 +313,10 @@ data "aws_iam_policy_document" "lambda" {
       "logs:CreateLogStream",
       "logs:PutLogEvents"
     ]
-    resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/*"]
+    resources = [
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/adp-${var.product_name}-*",
+      "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/adp-${var.product_name}-*:log-stream:*"
+    ]
   }
 
   statement {
@@ -331,6 +340,22 @@ data "aws_iam_policy_document" "lambda" {
       "secretsmanager:GetSecretValue"
     ]
     resources = [var.secrets_arn]
+  }
+
+  statement {
+    sid    = "GlueCatalog"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartitions"
+    ]
+    resources = [
+      "arn:aws:glue:${local.region}:${local.account_id}:catalog",
+      "arn:aws:glue:${local.region}:${local.account_id}:database/*",
+      "arn:aws:glue:${local.region}:${local.account_id}:table/*/*"
+    ]
   }
 }
 

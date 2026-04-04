@@ -24,8 +24,12 @@ from datetime import datetime, timezone
 import boto3
 import yaml
 
+import uuid as _uuid
+
+_CORRELATION_ID = str(_uuid.uuid4())
+
 logging.basicConfig(
-    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+    format='{"time":"%(asctime)s","level":"%(levelname)s","correlation_id":"' + _CORRELATION_ID + '","msg":"%(message)s"}',
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
@@ -165,7 +169,7 @@ def main():
 
     domain = config.get("product", {}).get("domain", "default")
     database_name = f"{domain}_{args.product}_{args.env}"
-    table_name = config.get("target", {}).get("table_name", args.product)
+    table_name = config.get("target", {}).get("table", args.product)
 
     glue_client = boto3.client("glue", region_name=args.region)
     cloudwatch_client = boto3.client("cloudwatch", region_name=args.region)

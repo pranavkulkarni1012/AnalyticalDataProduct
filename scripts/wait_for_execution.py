@@ -18,8 +18,12 @@ import time
 
 import boto3
 
+import uuid as _uuid
+
+_CORRELATION_ID = str(_uuid.uuid4())
+
 logging.basicConfig(
-    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+    format='{"time":"%(asctime)s","level":"%(levelname)s","correlation_id":"' + _CORRELATION_ID + '","msg":"%(message)s"}',
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)

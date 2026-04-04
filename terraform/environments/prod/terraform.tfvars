@@ -17,7 +17,7 @@ artifact_bucket = "adp-artifacts-prod"
 s3_data_path    = "s3://adp-data-prod/finance/monthly_revenue_by_category/"
 
 # Secrets
-snowflake_secret_arn = "arn:aws:secretsmanager:us-east-1:345678901234:secret:adp/snowflake-oauth-prod"
+snowflake_secret_arn = ""  # Set via CI/CD environment variable or terraform.tfvars.local (never commit real ARNs)
 
 # Glue (prod: higher capacity)
 glue_version = "4.0"

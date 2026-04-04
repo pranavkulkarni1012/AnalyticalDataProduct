@@ -14,12 +14,15 @@ import argparse
 import json
 import logging
 import sys
+import uuid as _uuid
 from datetime import datetime, timezone
 
 import yaml
 
+_CORRELATION_ID = str(_uuid.uuid4())
+
 logging.basicConfig(
-    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+    format='{"time":"%(asctime)s","level":"%(levelname)s","correlation_id":"' + _CORRELATION_ID + '","msg":"%(message)s"}',
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
@@ -34,7 +37,7 @@ def run_check(check, env):
     """Run a single reconciliation check. Returns a result dict."""
     check_type = check.get("type", "unknown")
     check_name = check.get("name", check_type)
-    tolerance = check.get("tolerance", 0.0)
+    tolerance = check.get("tolerance_pct", 0.0)
 
     try:
         # In a real implementation, this would query source/target systems.
@@ -43,7 +46,7 @@ def run_check(check, env):
             "name": check_name,
             "type": check_type,
             "environment": env,
-            "tolerance": tolerance,
+            "tolerance_pct": tolerance,
             "source_value": None,
             "target_value": None,
             "passed": True,
@@ -92,7 +95,7 @@ def main():
         logger.error("Failed to parse config: %s", e)
         sys.exit(1)
 
-    recon_checks = config.get("reconciliation", {}).get("checks", [])
+    recon_checks = config.get("reconciliation", {}).get("rules", [])
     if not recon_checks:
         logger.warning("No reconciliation checks defined in config.")
         sys.exit(0)

@@ -7,6 +7,11 @@ variable "product_name" {
   type        = string
 }
 
+variable "domain" {
+  description = "Business domain (e.g., sales_analytics). Used in IAM role naming convention."
+  type        = string
+}
+
 variable "environment" {
   description = "Deployment environment (dev, staging, prod)"
   type        = string
@@ -28,8 +33,8 @@ variable "secrets_arn" {
   type        = string
 
   validation {
-    condition     = can(regex("^arn:aws:secretsmanager:", var.secrets_arn))
-    error_message = "secrets_arn must be a valid Secrets Manager ARN."
+    condition     = var.secrets_arn == "" || can(regex("^arn:aws:secretsmanager:", var.secrets_arn))
+    error_message = "secrets_arn must be empty or a valid Secrets Manager ARN."
   }
 }
 

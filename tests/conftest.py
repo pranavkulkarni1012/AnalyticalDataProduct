@@ -25,6 +25,8 @@ def _mock_aws_env(monkeypatch):
     monkeypatch.setenv("AWS_SECURITY_TOKEN", "testing")
     monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_PROFILE", "nonexistent-adp-test")
 
 
 # ---------------------------------------------------------------------------

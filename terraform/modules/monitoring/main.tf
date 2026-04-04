@@ -6,7 +6,7 @@
 # ── CloudWatch Log Group ─────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_log_group" "product" {
-  name              = "/adp/${var.product_name}/${var.environment}"
+  name              = "/adp/${var.domain}/${var.product_name}/${var.environment}"
   retention_in_days = var.log_retention_days
 
   tags = var.tags

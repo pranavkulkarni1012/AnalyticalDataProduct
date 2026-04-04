@@ -56,15 +56,20 @@ def main():
     # -------------------------------------------------------------------
     # Structured logging setup
     # -------------------------------------------------------------------
+    class _JsonFormatter(logging.Formatter):
+        def format(self, record):
+            return json.dumps({
+                "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+                "level": record.levelname,
+                "correlation_id": record.__dict__.get("correlation_id", ""),
+                "msg": record.getMessage(),
+            })
+
     base_logger = logging.getLogger(f"{product_name}_etl")
     if not base_logger.handlers:
         base_logger.setLevel(logging.INFO)
         handler_log = logging.StreamHandler()
-        handler_log.setFormatter(
-            logging.Formatter(
-                "%(asctime)s | %(levelname)s | %(correlation_id)s | %(message)s"
-            )
-        )
+        handler_log.setFormatter(_JsonFormatter())
         base_logger.addHandler(handler_log)
     logger = logging.LoggerAdapter(
         base_logger, {"correlation_id": correlation_id}
