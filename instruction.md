@@ -402,6 +402,7 @@ target:
     - created_date
   sort_order: []
   table_properties:
+    format-version: "2"
     write.format.default: parquet
     write.parquet.compression-codec: zstd
 
@@ -476,7 +477,7 @@ runtime:
 **EMR (PySpark):**
 ```yaml
 runtime:
-  emr_release: "emr-7.0.0"
+  emr_release: "emr-6.15.0"
   emr_mode: serverless        # serverless | ec2
   emr_application_id: ""      # for serverless
   instance_type: m5.2xlarge   # for ec2
@@ -614,7 +615,7 @@ Five hooks enforce safety constraints automatically. They fire during Claude Cod
 
 | Hook | Event | What It Does |
 |------|-------|-------------|
-| **pre-config-validation.sh** | Before Write/Edit on YAML | Blocks Snowflake write operations (INSERT, MERGE, UPDATE, DELETE, CREATE) |
+| **pre-config-validation.sh** | Before Write/Edit on YAML | Blocks Snowflake write operations (INSERT, MERGE, UPDATE, DELETE, CREATE TABLE, DROP TABLE, ALTER TABLE, TRUNCATE) |
 | **pre-deploy-terraform-plan.sh** | Before `terraform apply` | Runs `terraform plan` first; blocks if plan includes resource destruction |
 | **post-codegen-lint.sh** | After Write/Edit on .py files | Runs flake8 (style) and bandit (security scan) |
 | **post-codegen-docker-lint.sh** | After Write/Edit on Dockerfile | Runs hadolint (Dockerfile best practices) |
