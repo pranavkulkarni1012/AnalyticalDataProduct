@@ -92,7 +92,7 @@ def main():
         logger.error("Failed to parse config: %s", e)
         sys.exit(1)
 
-    recon_checks = config.get("reconciliation", {}).get("checks", [])
+    recon_checks = config.get("reconciliation", {}).get("rules", [])
     if not recon_checks:
         logger.warning("No reconciliation checks defined in config.")
         sys.exit(0)

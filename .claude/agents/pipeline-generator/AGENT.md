@@ -132,7 +132,7 @@ while attempt < max_attempts:
     1. Run flake8 on all generated files:
        flake8 {files} --max-line-length=120 --ignore=E501,W503
     2. Run bandit security scan:
-       bandit -r pipelines/{product.name}/ -ll
+       bandit -r pipelines/{product.name}/ -ll --exclude pipelines/{product.name}/tests
     3. If both pass: break (success).
     4. If either fails:
        a. Parse the error output (file, line, error code, message).

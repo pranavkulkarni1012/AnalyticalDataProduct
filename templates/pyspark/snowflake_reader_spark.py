@@ -12,6 +12,7 @@ Used by both glue_job_boilerplate.py and emr_job_boilerplate.py.
 import os
 import json
 import logging
+import re
 from urllib.parse import urlparse
 
 import boto3
@@ -138,9 +139,21 @@ def build_source_query(source):
 
     query = f"SELECT {col_list} FROM {fqn}"
 
+    # Filters come from the validated pipeline config YAML (not user input).
+    # They are pre-validated by /validate-config against the JSON Schema.
+    # We apply basic sanity checks here as defense-in-depth.
+    _DISALLOWED_SQL = re.compile(
+        r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE)\b",
+        re.IGNORECASE,
+    )
     filters = source.get("filters", [])
-    if filters:
-        where_clause = " AND ".join(filters)
+    safe_filters = []
+    for f in filters:
+        if _DISALLOWED_SQL.search(f):
+            raise ValueError(f"Filter contains disallowed SQL keyword: {f}")
+        safe_filters.append(f)
+    if safe_filters:
+        where_clause = " AND ".join(safe_filters)
         query += f" WHERE {where_clause}"
 
     return query

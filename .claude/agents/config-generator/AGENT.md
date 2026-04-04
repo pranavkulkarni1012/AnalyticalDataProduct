@@ -79,7 +79,7 @@ target:
   catalog: glue_catalog
   database: "adp_{spec.domain}"
   table: "{spec.product_name}"
-  s3_path: "s3://adp-{spec.domain}-prod/{spec.product_name}/"
+  s3_path: "s3://{spec.domain}-adp-{env}/{spec.product_name}/"  # {env} resolved from ENV variable or defaults to dev
   write_mode: "{spec.target.write_mode}"
   partition_by: [...]   # From spec.target.partition_spec
   sort_order: [...]     # From spec.target.sort_order

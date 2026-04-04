@@ -164,12 +164,14 @@ pipeline:
                             -backend-config=backend-dev.hcl \
                             -input=false \
                             -reconfigure
-                          # Revert to the previous state
-                          terraform apply \
+                          # Rollback: re-apply using the previous artifact version's plan
+                          # NOTE: -refresh-only only syncs state, it does NOT revert resources.
+                          # For a true rollback, re-deploy the previous artifact version.
+                          terraform plan \
                             -var="product_name=<+pipeline.variables.product_name>" \
-                            -auto-approve \
                             -input=false \
-                            -refresh-only
+                            -out=rollback.tfplan
+                          terraform apply -auto-approve -input=false rollback.tfplan
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STAGE 2: Deploy to STAGING (lead-engineer approval, 24h timeout)

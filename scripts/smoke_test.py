@@ -165,7 +165,7 @@ def main():
 
     domain = config.get("product", {}).get("domain", "default")
     database_name = f"{domain}_{args.product}_{args.env}"
-    table_name = config.get("target", {}).get("table_name", args.product)
+    table_name = config.get("target", {}).get("table", args.product)
 
     glue_client = boto3.client("glue", region_name=args.region)
     cloudwatch_client = boto3.client("cloudwatch", region_name=args.region)

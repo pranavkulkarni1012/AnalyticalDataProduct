@@ -145,8 +145,11 @@ Write `02-spec.json` to `artifacts/{run_id}/02-spec.json` (local) or
 `s3://adp-artifacts/{run_id}/02-spec.json` (S3).
 
 ## Error Handling
-- If Confluence MCP fails, write the spec to a local file and log a warning.
-  Do NOT fail the entire pipeline -- the spec JSON is the primary artifact.
+- If Confluence MCP fails (e.g., tools not permitted in settings.local.json),
+  write the spec to a local file and log a warning. Do NOT fail the entire
+  pipeline -- the spec JSON is the primary artifact. NOTE: Confluence MCP tools
+  (createConfluencePage, updateConfluencePage, etc.) must be explicitly added to
+  `.claude/settings.local.json` permissions for Confluence publishing to work.
 - If JIRA MCP comment fails, log a warning and continue.
 - If the input `01-requirements.json` has critical missing fields (no sources or
   no target), stop and report the error.

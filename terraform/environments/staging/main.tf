@@ -53,6 +53,7 @@ module "iam" {
   source = "../../modules/iam"
 
   product_name  = var.product_name
+  domain        = var.domain
   environment   = var.environment
   s3_bucket_arn = "arn:aws:s3:::${var.artifact_bucket}"
   s3_data_path  = var.s3_data_path

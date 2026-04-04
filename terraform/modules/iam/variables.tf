@@ -7,6 +7,11 @@ variable "product_name" {
   type        = string
 }
 
+variable "domain" {
+  description = "Business domain (e.g., sales_analytics). Used in IAM role naming convention."
+  type        = string
+}
+
 variable "environment" {
   description = "Deployment environment (dev, staging, prod)"
   type        = string

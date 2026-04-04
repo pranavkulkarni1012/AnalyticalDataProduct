@@ -225,8 +225,9 @@ directly from the config values.
         ```
         Execute `target_expr` via `spark.sql(target_expr).collect()[0][0]`.
         Calculate percentage difference:
-        `abs(source_val - target_val) / max(source_val, 1) * 100`
-        (guard against division by zero when `source_val == 0`).
+        For `row_count`/`distinct_count`: `abs(source_val - target_val) / max(source_val, 1) * 100`
+        For `sum`: `abs(source_val - target_val) / max(abs(source_val), 1) * 100`
+        (use `abs()` on denominator for sum rules to handle negative sums correctly).
         Compare against `tolerance_pct`.
     - If any check fails, log an error and raise `ValueError` with the rule
       name and actual diff.
@@ -291,7 +292,7 @@ If any are missing, add them:
      ```python
      lambda_client = boto3.client("lambda")
      response = lambda_client.invoke(
-         FunctionName=f"adp-{product_name}-recon",
+         FunctionName=f"adp-{product_name}-recon-{env}",
          InvocationType="RequestResponse",
          Payload=json.dumps({"config_path": config_path})
      )

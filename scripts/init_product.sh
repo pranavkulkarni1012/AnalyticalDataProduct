@@ -26,6 +26,12 @@ if ! echo "$PRODUCT_NAME" | grep -qE '^[a-z][a-z0-9_]{2,50}$'; then
   exit 1
 fi
 
+# Validate domain format (same pattern as product_name)
+if ! echo "$DOMAIN" | grep -qE '^[a-z][a-z0-9_]{2,50}$'; then
+  echo "ERROR: domain must match ^[a-z][a-z0-9_]{2,50}$ (lowercase snake_case, 3-51 chars)"
+  exit 1
+fi
+
 REPO_DIR="analytical-data-product-${PRODUCT_NAME}"
 
 echo "============================================================"

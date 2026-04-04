@@ -58,12 +58,10 @@ resource "aws_iam_role_policy" "sfn_execution" {
           "ecs:StopTask",
           "ecs:DescribeTasks"
         ]
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "aws:RequestedRegion" = data.aws_region.current.name
-          }
-        }
+        Resource = [
+          "arn:aws:ecs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:task-definition/adp-${var.product_name}-*",
+          "arn:aws:ecs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:task/*"
+        ]
       },
       {
         Effect   = "Allow"

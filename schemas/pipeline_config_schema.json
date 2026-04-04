@@ -336,7 +336,7 @@
     "target": {
       "type": "object",
       "description": "Output target definition (Iceberg table)",
-      "required": ["catalog", "database", "table", "s3_path", "write_mode"],
+      "required": ["catalog", "database", "table", "s3_path", "format", "write_mode"],
       "additionalProperties": false,
       "properties": {
         "catalog": {

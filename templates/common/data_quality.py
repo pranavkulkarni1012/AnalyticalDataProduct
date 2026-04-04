@@ -84,12 +84,31 @@ def _get_out_of_range_count(df, column, min_val=None, max_val=None):
     return violations
 
 
-def _get_regex_violation_count(df, column, pattern):
-    """Get count of values that do not match the regex pattern (full string)."""
+def _get_regex_violation_count(df, column, pattern, logger=None):
+    """Get count of values that do not match the regex pattern (full string).
+
+    NOTE: NULL values are excluded from regex checking in both Spark and Pandas
+    paths. If NULLs should be treated as violations, add a separate not_null
+    check for the same column.
+    """
     if _is_spark_dataframe(df):
-        from pyspark.sql.functions import col
+        from pyspark.sql.functions import col, isnull
+        null_count = df.filter(isnull(col(column))).count()
+        if null_count > 0 and logger:
+            logger.warning(
+                f"Column '{column}' has {null_count} null(s) excluded from "
+                "regex check -- add a not_null check if nulls are violations"
+            )
         anchored = f"^(?:{pattern})$"
-        return df.filter(~col(column).rlike(anchored)).count()
+        return df.filter(
+            ~isnull(col(column)) & ~col(column).rlike(anchored)
+        ).count()
+    null_count = int(df[column].isna().sum())
+    if null_count > 0 and logger:
+        logger.warning(
+            f"Column '{column}' has {null_count} null(s) excluded from "
+            "regex check -- add a not_null check if nulls are violations"
+        )
     compiled = re.compile(pattern)
     non_null = df[column].dropna()
     violations = non_null.apply(
@@ -153,7 +172,7 @@ def run_data_quality_checks(df, checks, logger, correlation_id=None):
                 )
             elif check_type == "regex":
                 result = _check_regex(
-                    df, check_name, column, parameters, total_rows
+                    df, check_name, column, parameters, total_rows, logger
                 )
             elif check_type == "custom":
                 result = _check_custom(
@@ -258,10 +277,10 @@ def _check_range(df, check_name, column, parameters, total_rows):
     }
 
 
-def _check_regex(df, check_name, column, parameters, total_rows):
+def _check_regex(df, check_name, column, parameters, total_rows, logger=None):
     """Check that column values match a regex pattern."""
     pattern = parameters.get("pattern", ".*")
-    violation_count = _get_regex_violation_count(df, column, pattern)
+    violation_count = _get_regex_violation_count(df, column, pattern, logger)
     passed = violation_count == 0
     return {
         "check": check_name,

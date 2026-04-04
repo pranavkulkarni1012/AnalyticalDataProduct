@@ -32,7 +32,7 @@ first.
 2. Extract `compute.engine`, `product.name`, `product.domain`.
 3. Derive naming conventions:
    - Job name: `adp-{product.domain}-{product.name}-etl-prod`
-   - Recon Lambda: `adp-{product.name}-recon-prod`
+   - Recon Lambda: `adp-{product.name}-recon-{env}` (where `{env}` is passed via execution input `$.env`, defaulting to `prod`)
    - SNS topic: Read from `notifications.sns_topic_arn` in the config if present.
      If absent, use `adp-notifications-prod` as the topic name and construct
      the ARN as a Terraform variable reference `${var.sns_topic_arn}` to avoid
@@ -43,9 +43,11 @@ first.
 Map `compute.engine` to the Step Functions resource ARN:
 - `glue` -> `arn:aws:states:::glue:startJobRun.sync`
 - `emr` -> `arn:aws:states:::elasticmapreduce:addStep.sync` (EMR EC2) or
-  `arn:aws:states:::emr-serverless:startJobRun.sync` (EMR Serverless).
+  `arn:aws:states:::aws-sdk:emrserverless:startJobRun` (EMR Serverless).
   Use EMR Serverless by default; if `runtime.emr_mode` is `"ec2"`, use
-  `elasticmapreduce:addStep.sync`.
+  `elasticmapreduce:addStep.sync`. NOTE: EMR Serverless does not support
+  the `.sync` optimized integration; use the `aws-sdk` integration and
+  add a polling loop (Wait + GetJobRun + Choice) after submission.
 - `lambda` -> `arn:aws:states:::lambda:invoke`
 - `ecs` -> `arn:aws:states:::ecs:runTask.sync`
 

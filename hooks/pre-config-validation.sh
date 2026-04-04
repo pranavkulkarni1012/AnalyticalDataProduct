@@ -18,7 +18,7 @@ CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null)
 if [ -n "$FILE_PATH" ] && echo "$FILE_PATH" | grep -q '\.yaml$'; then
   # Check the content being written (available for Write/Edit PreToolUse)
   if [ -n "$CONTENT" ]; then
-    if echo "$CONTENT" | grep -iE "(INSERT INTO|MERGE INTO|UPDATE |DELETE FROM|CREATE TABLE)" 2>/dev/null; then
+    if echo "$CONTENT" | grep -qiE "(INSERT INTO|MERGE INTO|UPDATE |DELETE FROM|CREATE TABLE)" 2>/dev/null; then
       echo "BLOCKED: Config contains Snowflake write operations. Snowflake is read-only." >&2
       echo "Snowflake sources must use SELECT only. Remove any INSERT, MERGE, UPDATE, DELETE, or CREATE TABLE statements." >&2
       exit 2  # Exit 2 = block the operation (Claude Code hook standard)
@@ -27,7 +27,7 @@ if [ -n "$FILE_PATH" ] && echo "$FILE_PATH" | grep -q '\.yaml$'; then
 
   # Also check the existing file if it exists (for Edit operations)
   if [ -f "$FILE_PATH" ]; then
-    if grep -iE "(INSERT INTO|MERGE INTO|UPDATE |DELETE FROM|CREATE TABLE)" "$FILE_PATH" 2>/dev/null; then
+    if grep -qiE "(INSERT INTO|MERGE INTO|UPDATE |DELETE FROM|CREATE TABLE)" "$FILE_PATH" 2>/dev/null; then
       echo "BLOCKED: Config contains Snowflake write operations. Snowflake is read-only." >&2
       echo "Snowflake sources must use SELECT only. Remove any INSERT, MERGE, UPDATE, DELETE, or CREATE TABLE statements." >&2
       exit 2  # Exit 2 = block the operation (Claude Code hook standard)

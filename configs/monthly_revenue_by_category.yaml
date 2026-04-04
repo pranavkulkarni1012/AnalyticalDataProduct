@@ -123,7 +123,7 @@ target:
   catalog: glue_catalog
   database: sales_analytics_monthly_revenue_prod
   table: monthly_revenue_by_category
-  s3_path: "s3://sales-adp-prod/sales_analytics/monthly_revenue_by_category/data/"
+  s3_path: "s3://sales-analytics-adp-prod/sales_analytics/monthly_revenue_by_category/data/"
   format: iceberg
   write_mode: overwrite
   partition_by:

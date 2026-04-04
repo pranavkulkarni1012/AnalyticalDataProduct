@@ -17,7 +17,7 @@ artifact_bucket = "adp-artifacts-staging"
 s3_data_path    = "s3://adp-data-staging/finance/monthly_revenue_by_category/"
 
 # Secrets
-snowflake_secret_arn = "arn:aws:secretsmanager:us-east-1:234567890123:secret:adp/snowflake-oauth-staging"
+snowflake_secret_arn = ""  # Set via CI/CD environment variable or terraform.tfvars.local (never commit real ARNs)
 
 # Glue (staging: moderate capacity)
 glue_version = "4.0"

@@ -22,6 +22,12 @@ fi
 TERRAFORM_DIR=$(echo "$COMMAND" | grep -oP '(?<=cd\s)[^\s;]+' || echo "terraform")
 ENV=$(echo "$COMMAND" | grep -oP '(?<=-var=.environment=)[^\s"]+' || echo "dev")
 
+# Validate environment against allowlist
+if [[ ! "$ENV" =~ ^(dev|staging|prod)$ ]]; then
+  echo "BLOCKED: Invalid environment '$ENV'. Must be dev, staging, or prod." >&2
+  exit 2
+fi
+
 cd "$TERRAFORM_DIR/environments/$ENV" || {
   echo "BLOCKED: Cannot find terraform directory: $TERRAFORM_DIR/environments/$ENV" >&2
   exit 2
