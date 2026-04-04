@@ -1,0 +1,140 @@
+# governance/templates/data_contract.yaml
+# Data Contract Template for Analytical Data Products
+#
+# This template defines the published guarantees for a data product,
+# following Data Mesh principles. It is generated from the pipeline
+# config YAML and published to Confluence via the Spec Generator Agent.
+#
+# Usage:
+#   The Config Generator agent populates this template during pipeline
+#   creation. The Spec Generator agent publishes it to Confluence.
+#   Consumers reference contracts to understand schema, SLAs, and quality.
+
+# ── Contract Metadata ────────────────────────────────────────────────
+
+contract:
+  version: "1.0.0"                       # Semantic versioning (major.minor.patch)
+  # Major bump: breaking changes (column removal, type change, rename)
+  # Minor bump: backward-compatible additions (new column, new metric)
+  # Patch bump: documentation, SLA adjustment, threshold tuning
+  created_at: "2025-01-01T00:00:00Z"     # ISO-8601 creation timestamp
+  updated_at: "2025-01-01T00:00:00Z"     # ISO-8601 last update timestamp
+  status: active                          # active | deprecated | draft
+
+# ── Product Identity ─────────────────────────────────────────────────
+
+product:
+  name: "{{ product_name }}"
+  domain: "{{ domain }}"
+  owner: "{{ owner_email }}"
+  description: "{{ product_description }}"
+  tags:
+    cost_center: "{{ cost_center }}"
+    data_classification: "{{ data_classification }}"
+    compliance: "{{ compliance }}"
+
+# ── Schema Definition ────────────────────────────────────────────────
+# Defines the published column-level contract for consumers.
+
+schema:
+  catalog: glue_catalog
+  database: "{{ target_database }}"
+  table: "{{ target_table }}"
+  format: iceberg
+  columns:
+    # Example (populated by Config Generator):
+    # - name: product_category
+    #   type: string
+    #   nullable: false
+    #   description: "Product category from the catalog"
+    # - name: revenue_month
+    #   type: date
+    #   nullable: false
+    #   description: "First day of the revenue month"
+    # - name: total_revenue
+    #   type: double
+    #   nullable: false
+    #   description: "Sum of total_amount for the month and category"
+    - name: "{{ column_name }}"
+      type: "{{ column_type }}"          # string | int | long | double | date | timestamp | boolean
+      nullable: "{{ nullable }}"         # true | false
+      description: "{{ column_description }}"
+  partition_by: []                        # Populated from target.partition_by
+  sort_order: []                          # Populated from target.sort_order
+
+# ── SLA Guarantees ───────────────────────────────────────────────────
+# Published service-level agreements that consumers can rely on.
+
+sla:
+  freshness:
+    max_age_hours: 24                     # Data must be refreshed within this window
+    schedule: "{{ cron_expression }}"     # Expected refresh schedule
+    timezone: UTC
+  availability:
+    uptime_pct: 99.5                      # Target table availability percentage
+    maintenance_window: "Sun 02:00-04:00 UTC"  # Planned maintenance window
+  latency:
+    max_pipeline_duration_minutes: 120    # Pipeline must complete within this time
+    p95_duration_minutes: 60              # 95th percentile target
+
+# ── Quality Thresholds ───────────────────────────────────────────────
+# Minimum quality standards that the pipeline must maintain.
+
+quality:
+  row_count:
+    min: 1                                # Minimum expected row count (0 = no minimum)
+    max: null                             # Maximum expected row count (null = no maximum)
+  null_percentage_limits:
+    # Maximum allowed null percentage per column (0.0 = no nulls allowed)
+    # Example:
+    # product_category: 0.0
+    # total_revenue: 0.0
+    "{{ column_name }}": "{{ max_null_pct }}"
+  reconciliation:
+    enabled: true
+    tolerance_pct: 0.01                   # Default tolerance for source-target checks
+    rules:
+      # Populated from reconciliation.rules in the pipeline config
+      - name: "{{ rule_name }}"
+        type: "{{ rule_type }}"           # row_count | sum | distinct_count | null_check
+        tolerance_pct: "{{ tolerance }}"
+  data_quality_checks:
+    # Populated from data_quality.checks in the pipeline config
+    - name: "{{ check_name }}"
+      type: "{{ check_type }}"            # not_null | unique | range | regex
+      column: "{{ column }}"
+
+# ── Source Lineage (Static) ──────────────────────────────────────────
+# Derived at code-generation time from the pipeline config YAML.
+
+lineage:
+  sources:
+    # Populated from sources[] in the pipeline config
+    - name: "{{ source_name }}"
+      system: snowflake
+      database: "{{ source_database }}"
+      schema: "{{ source_schema }}"
+      table: "{{ source_table }}"
+      columns: []                         # Source columns used
+  target:
+    catalog: glue_catalog
+    database: "{{ target_database }}"
+    table: "{{ target_table }}"
+    s3_path: "{{ s3_path }}"
+  column_mappings:
+    # Source-to-target column lineage
+    # Example:
+    # - source: "customer_orders.total_amount"
+    #   target: "total_revenue"
+    #   transformation: "SUM(customer_orders.total_amount)"
+    - source: "{{ source_column }}"
+      target: "{{ target_column }}"
+      transformation: "{{ transformation_expr }}"
+
+# ── Contact & Escalation ─────────────────────────────────────────────
+
+support:
+  owner_team: "{{ owner_email }}"
+  slack_channel: "#{{ domain }}-data"
+  on_call_rotation: "{{ domain }}-oncall"
+  escalation_policy: "Page owner team if SLA breach > 2 hours"

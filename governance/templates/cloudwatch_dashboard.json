@@ -1,0 +1,267 @@
+{
+  "$schema": "https://adp.company.com/schemas/cloudwatch_dashboard.json",
+  "_comment": [
+    "CloudWatch Dashboard Template for Analytical Data Products.",
+    "Parameterized with product name and resource ARNs.",
+    "Deploy via Terraform monitoring module or AWS CLI.",
+    "",
+    "Template variables (replace before deployment):",
+    "  {{ product_name }}        - Product name (e.g., monthly_revenue_by_category)",
+    "  {{ domain }}              - Business domain (e.g., sales_analytics)",
+    "  {{ environment }}         - Environment (dev/staging/prod)",
+    "  {{ aws_region }}          - AWS region (e.g., us-east-1)",
+    "  {{ aws_account_id }}      - AWS account ID",
+    "  {{ glue_job_name }}       - Glue job name",
+    "  {{ state_machine_name }}  - Step Function state machine name",
+    "  {{ log_group_name }}      - CloudWatch log group name"
+  ],
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "# {{ domain }} / {{ product_name }} — {{ environment }}"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Job Duration (minutes)",
+        "metrics": [
+          [
+            "Glue",
+            "glue.driver.aggregate.elapsedTime",
+            "JobName",
+            "{{ glue_job_name }}",
+            {
+              "stat": "Average",
+              "period": 86400,
+              "label": "Avg Duration"
+            }
+          ],
+          [
+            "...",
+            {
+              "stat": "Maximum",
+              "period": 86400,
+              "label": "Max Duration"
+            }
+          ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "{{ aws_region }}",
+        "period": 86400,
+        "yAxis": {
+          "left": {
+            "label": "Minutes",
+            "min": 0
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Job Error Count",
+        "metrics": [
+          [
+            "Glue",
+            "glue.driver.aggregate.numFailedTasks",
+            "JobName",
+            "{{ glue_job_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Failed Tasks",
+              "color": "#d62728"
+            }
+          ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "{{ aws_region }}",
+        "period": 86400,
+        "yAxis": {
+          "left": {
+            "label": "Count",
+            "min": 0
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Records Processed",
+        "metrics": [
+          [
+            "Glue",
+            "glue.driver.aggregate.recordsRead",
+            "JobName",
+            "{{ glue_job_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Records Read"
+            }
+          ],
+          [
+            "Glue",
+            "glue.driver.aggregate.recordsWritten",
+            "JobName",
+            "{{ glue_job_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Records Written",
+              "color": "#2ca02c"
+            }
+          ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "{{ aws_region }}",
+        "period": 86400
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 7,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Step Function Executions",
+        "metrics": [
+          [
+            "AWS/States",
+            "ExecutionsSucceeded",
+            "StateMachineArn",
+            "arn:aws:states:{{ aws_region }}:{{ aws_account_id }}:stateMachine:{{ state_machine_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Succeeded",
+              "color": "#2ca02c"
+            }
+          ],
+          [
+            "AWS/States",
+            "ExecutionsFailed",
+            "StateMachineArn",
+            "arn:aws:states:{{ aws_region }}:{{ aws_account_id }}:stateMachine:{{ state_machine_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Failed",
+              "color": "#d62728"
+            }
+          ],
+          [
+            "AWS/States",
+            "ExecutionsTimedOut",
+            "StateMachineArn",
+            "arn:aws:states:{{ aws_region }}:{{ aws_account_id }}:stateMachine:{{ state_machine_name }}",
+            {
+              "stat": "Sum",
+              "period": 86400,
+              "label": "Timed Out",
+              "color": "#ff7f0e"
+            }
+          ]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "{{ aws_region }}",
+        "period": 86400
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 7,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Data Freshness (Hours Since Last Update)",
+        "metrics": [
+          [
+            "ADP/{{ product_name }}",
+            "DataAgeHours",
+            "Environment",
+            "{{ environment }}",
+            {
+              "stat": "Maximum",
+              "period": 3600,
+              "label": "Data Age (hrs)"
+            }
+          ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "{{ aws_region }}",
+        "period": 3600,
+        "yAxis": {
+          "left": {
+            "label": "Hours",
+            "min": 0
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "SLA Threshold",
+              "value": 24,
+              "color": "#d62728"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "alarm",
+      "x": 0,
+      "y": 13,
+      "width": 24,
+      "height": 3,
+      "properties": {
+        "title": "Alarm Status",
+        "alarms": [
+          "arn:aws:cloudwatch:{{ aws_region }}:{{ aws_account_id }}:alarm:adp-{{ product_name }}-job-failure-{{ environment }}",
+          "arn:aws:cloudwatch:{{ aws_region }}:{{ aws_account_id }}:alarm:adp-{{ product_name }}-sfn-failure-{{ environment }}",
+          "arn:aws:cloudwatch:{{ aws_region }}:{{ aws_account_id }}:alarm:adp-{{ product_name }}-duration-breach-{{ environment }}"
+        ]
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 16,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "title": "Recent Error Logs",
+        "query": "SOURCE '{{ log_group_name }}' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20",
+        "region": "{{ aws_region }}",
+        "stacked": false,
+        "view": "table"
+      }
+    }
+  ]
+}
