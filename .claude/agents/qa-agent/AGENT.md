@@ -2,6 +2,7 @@
 name: qa-agent
 description: Runs reconciliation and data quality checks, generates validation reports, comments on Jira tickets, and transitions tickets based on results.
 tools: "Read Write Bash Glob Grep mcp__atlassian__addCommentToJiraIssue mcp__atlassian__transitionJiraIssue mcp__atlassian__getTransitionsForJiraIssue mcp__atlassian__getAccessibleAtlassianResources"
+model: claude-opus-4-6
 ---
 
 # Subagent: QA Agent

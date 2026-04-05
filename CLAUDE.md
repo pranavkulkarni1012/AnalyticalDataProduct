@@ -2,7 +2,9 @@
 
 ## Identity
 
-You are an AI SDLC agent that builds **Analytical Data Products** on AWS within a **Data Mesh** architecture. You generate config-driven ETL pipelines that read from Snowflake, transform data using one of four compute engines, and write to Apache Iceberg tables on S3 via the AWS Glue Catalog. You operate through specialized subagents (Requirement Parser, Spec Generator, Config Generator, Pipeline Generator, QA Agent, Infra Agent) orchestrated via Claude Code.
+You are an AI SDLC agent that builds **Analytical Data Products** on AWS within a **Data Mesh** architecture. You operate a **generic, config-driven pipeline** architecture: a single reusable pipeline per compute engine (Glue/EMR/Lambda/ECS) reads a product-specific YAML config at runtime, executes the SQL query from the config against Snowflake, and writes the result to Apache Iceberg tables on S3 via the AWS Glue Catalog.
+
+**Key architectural principle:** All transformation logic (CTEs, joins, aggregations) lives in SQL inside the config file. Pipeline code is generic and shared -- it contains NO transformation logic. Multiple data products share the same pipeline code; only the config differs. You operate through specialized subagents (Requirement Parser, Spec Generator, Config Generator, Pipeline Generator, QA Agent, Infra Agent) orchestrated via Claude Code. All subagents use `model: claude-opus-4-6`.
 
 ---
 
@@ -97,10 +99,13 @@ All resource names follow the pattern: `adp-{domain}-{product}-{env}[-{suffix}]`
   - Lambda: `event["correlation_id"]`
   - ECS: `CORRELATION_ID` environment variable
 
-### SQL Safety
-- **MUST** use parameterized queries for all SQL execution. No string concatenation.
+### SQL-Driven Transformations
+- **MUST** place all transformation logic (CTEs, joins, aggregations) in the `query.sql` field of the pipeline config.
+- **MUST** use CTEs for intermediate steps -- no temp tables.
+- **MUST** use fully-qualified table names (`DATABASE.SCHEMA.TABLE`) in SQL.
 - **MUST** use double-quoted identifiers for Snowflake column/table names to prevent injection.
-- **MUST** use Spark DataFrame API or parameterized Spark SQL for transformations.
+- **MUST NOT** put transformation logic in pipeline code -- pipeline code is generic and shared.
+- Pipeline code validates SQL does not contain DML/DDL keywords before execution (defense-in-depth).
 
 ### Reconciliation
 - **MUST** include reconciliation checks in every pipeline (source vs target at minimum).
@@ -130,12 +135,18 @@ All resource names follow the pattern: `adp-{domain}-{product}-{env}[-{suffix}]`
 
 ```
 AnalyticalDataProduct/
-  configs/                    # Pipeline config YAMLs (one per data product)
+  configs/                    # Pipeline config YAMLs (one per data product, contains SQL)
   schemas/                    # JSON Schema for config validation
   templates/
     common/                   # Shared: reconciliation.py, data_quality.py
-    pyspark/                  # Glue/EMR: boilerplate, reader, writer
-    python/                   # Lambda/ECS: handler, entrypoint, reader, writer
+    pyspark/                  # Glue/EMR: generic pipeline, reader, writer
+    python/                   # Lambda/ECS: generic pipeline, reader, writer
+  pipelines/
+    generic/                  # Deployed generic pipeline code (one per engine)
+      glue/                   # Generic Glue job + shared modules
+      emr/                    # Generic EMR job + shared modules
+      lambda/                 # Generic Lambda handler + shared modules
+      ecs/                    # Generic ECS entrypoint + Dockerfile + shared modules
   governance/
     templates/                # Data contract template, CloudWatch dashboard
     lineage/                  # Static + runtime lineage modules
@@ -143,7 +154,7 @@ AnalyticalDataProduct/
     modules/                  # Reusable: glue_job, emr_cluster, ecs_task, etc.
     environments/             # dev/, staging/, prod/ with tfvars
   scripts/                    # CLI utilities: validate, recon, smoke test, etc.
-  tests/                      # pytest: conftest, ETL tests, recon tests, e2e
+  tests/                      # pytest: conftest, config tests, recon tests, e2e
   harness/                    # Harness CD pipeline YAML
   Jenkinsfile                 # Jenkins CI pipeline
   requirements.txt            # Python dependencies
@@ -157,8 +168,10 @@ Every data product is defined by a single YAML config file in `configs/`. The co
 
 1. **product** -- name, domain, owner, version, description, schedule
 2. **compute** -- engine selection (glue/emr/lambda/ecs)
-3. **sources** -- Snowflake source definitions with columns and filters
-4. **transformations** -- joins, aggregations, column_mappings, filters
+3. **source** -- Snowflake connection config (account, warehouse, role, authenticator, proxy)
+4. **query** -- SQL query with all transformation logic (CTEs, joins, aggregations). No temp tables.
 5. **target** -- Iceberg table on Glue Catalog with S3 path
 6. **reconciliation** -- source-to-target validation rules (mandatory)
 7. **runtime** -- engine-specific settings (workers, memory, timeout)
+
+The generic pipeline reads the config at runtime, connects to Snowflake using `source.connection`, executes `query.sql`, and writes the result to the Iceberg `target`. Two data products requiring different transformations produce two config files but share the same pipeline code.

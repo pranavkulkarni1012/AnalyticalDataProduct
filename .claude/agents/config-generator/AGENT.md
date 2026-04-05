@@ -1,7 +1,8 @@
 ---
 name: config-generator
-description: Takes enriched spec JSON and produces a validated pipeline config YAML, applying domain defaults and auto-fixing validation errors up to 3 retries.
+description: Takes enriched spec JSON and produces a validated pipeline config YAML with SQL-driven transformations, applying domain defaults and auto-fixing validation errors up to 3 retries.
 tools: "Read Write Bash Glob Grep"
+model: claude-opus-4-6
 ---
 
 # Subagent: Config Generator
@@ -9,6 +10,8 @@ tools: "Read Write Bash Glob Grep"
 ## System Prompt
 You are the Config Generator agent. You take an enriched technical specification JSON
 and produce a validated pipeline configuration YAML that conforms to the project schema.
+The config uses a SQL-driven approach where all transformation logic lives in a `query.sql`
+field rather than structured transformation objects.
 
 ## Input
 - Enriched spec JSON (from Spec Generator): `02-spec.json`
@@ -28,7 +31,8 @@ and produce a validated pipeline configuration YAML that conforms to the project
 
 ### Step 2: Map Spec to Config YAML
 
-Map the spec fields to the pipeline config YAML schema:
+Map the spec fields to the pipeline config YAML schema. The config has these required
+top-level keys: `product`, `compute`, `source`, `query`, `target`, `reconciliation`, `runtime`.
 
 ```yaml
 product:
@@ -51,35 +55,27 @@ compute:
     product: "{spec.product_name}"
     domain: "{spec.domain}"
 
-sources:
-  # One entry per spec source, mapped to Snowflake connection format
-  - name: "{source.name}"
-    type: snowflake
-    connection:
-      account: "{extracted_account}"
-      warehouse: "{extracted_warehouse}"
-      role: "{domain}_READER_ROLE"
-      authenticator: oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: "{source.database}"
-    schema: "{source.schema}"
-    table: "{source.table}"
-    columns: [...]
-    filters: [...]
+source:
+  type: snowflake
+  connection:
+    account: "{spec.source.account}"
+    warehouse: "{spec.source.warehouse}"
+    role: "{spec.source.role}"
+    authenticator: oauth
+    proxy:
+      http_proxy: "http://corporate-proxy.company.com:8080"
+      https_proxy: "http://corporate-proxy.company.com:8080"
 
-transformations:
-  joins: [...]          # From spec.transformations.joins
-  aggregations: [...]   # From spec.transformations.aggregations
-  column_mappings: [...] # From spec.transformations.column_mappings
-  filters: [...]        # From spec.transformations.filters
+query:
+  sql: |
+    {spec.query.sql}
+  description: "{spec.query.description}"
 
 target:
   catalog: glue_catalog
   database: "{spec.domain}_{spec.product_name}_{env}"
   table: "{spec.product_name}"
-  s3_path: "s3://{spec.domain}-adp-{env}/{spec.product_name}/"  # {env} resolved from ENV variable or defaults to dev
+  s3_path: "s3://{spec.domain}-adp-{env}/{spec.product_name}/"
   write_mode: "{spec.target.write_mode}"
   partition_by: [...]   # From spec.target.partition_spec
   sort_order: [...]     # From spec.target.sort_order
@@ -121,7 +117,7 @@ Apply these defaults for fields not explicitly set in the spec:
 - `runtime.container_image`: `"{account_id}.dkr.ecr.us-east-1.amazonaws.com/adp-base:latest"`
 
 **Common defaults:**
-- `sources[].connection.authenticator`: `"oauth"` (always)
+- `source.connection.authenticator`: `"oauth"` (always)
 - `target.catalog`: `"glue_catalog"` (always)
 - `product.owner`: `"data-engineering@company.com"` (if not specified)
 - `product.description`: `"{product_name} - {domain} analytical data product"` (if not specified)
@@ -174,7 +170,7 @@ Write the validated `03-config.yaml` to:
 ## Error Handling
 - **Schema not found**: If `schemas/pipeline_config_schema.json` is missing, log an error
   and generate the config based on example configs only.
-- **Spec missing critical fields**: If `02-spec.json` lacks sources or target, stop
+- **Spec missing critical fields**: If `02-spec.json` lacks source or target, stop
   and report the error.
 - **Auto-fix exhausted**: After 3 failed fix attempts, output the config as-is with
   validation errors documented in comments. Flag for human review.

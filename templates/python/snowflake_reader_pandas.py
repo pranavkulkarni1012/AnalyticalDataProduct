@@ -2,10 +2,12 @@
 Snowflake Reader for Python/Pandas (DBAPI Connector)
 Template: snowflake_reader_pandas.py
 
-Provides the read_from_snowflake() function for Python-based engines
-(Lambda and ECS). Retrieves an OAuth token from AWS Secrets Manager, sets
-proxy environment variables for corporate networks, and reads data via
-snowflake-connector-python with cursor.fetch_pandas_all().
+Provides utility functions for connecting to Snowflake via
+snowflake-connector-python and executing arbitrary SQL queries. Used by
+the generic Lambda and ECS pipeline templates.
+
+The SQL query comes from the pipeline config YAML at runtime -- this
+module does NOT build queries from source metadata.
 
 Used by both lambda_handler.py and ecs_entrypoint.py.
 """
@@ -19,8 +21,12 @@ import boto3
 import snowflake.connector
 import pandas as pd
 
+
+# ---------------------------------------------------------------------------
+# SQL safety validation
+# ---------------------------------------------------------------------------
 _DISALLOWED_SQL = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE)\b",
+    r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
     re.IGNORECASE,
 )
 
@@ -113,85 +119,41 @@ def build_conn_params(connection, oauth_token):
     return params
 
 
-def build_source_query(source):
+def run_query(conn_params, query_sql, logger):
     """
-    Build a SQL SELECT query from the source configuration.
+    Execute an arbitrary SQL query against Snowflake and return a pandas DataFrame.
 
-    Uses fully-qualified table names with double-quoted identifiers
-    to prevent SQL injection.
+    Validates the SQL for safety (SELECT-only) before execution as
+    defense-in-depth.
 
     Args:
-        source: Source config dict with database, schema, table, columns,
-                and filters.
-
-    Returns:
-        SQL query string.
-    """
-    def quote_identifier(name):
-        return '"' + name.replace('"', '""') + '"'
-
-    fqn = (
-        f"{quote_identifier(source['database'])}."
-        f"{quote_identifier(source['schema'])}."
-        f"{quote_identifier(source['table'])}"
-    )
-
-    columns = source.get("columns", "*")
-    if isinstance(columns, list) and columns:
-        col_list = ", ".join(quote_identifier(c) for c in columns)
-    else:
-        col_list = "*"
-
-    query = f"SELECT {col_list} FROM {fqn}"
-
-    # Filters come from the validated pipeline config YAML (not user input).
-    # They are pre-validated by /validate-config against the JSON Schema.
-    # We apply basic sanity checks here as defense-in-depth.
-    filters = source.get("filters", [])
-    safe_filters = []
-    for f in filters:
-        if _DISALLOWED_SQL.search(f):
-            raise ValueError(f"Filter contains disallowed SQL keyword: {f}")
-        safe_filters.append(f)
-    if safe_filters:
-        where_clause = " AND ".join(safe_filters)
-        query += f" WHERE {where_clause}"
-
-    return query
-
-
-def read_from_snowflake(conn_params, source, logger):
-    """
-    Read a Snowflake source into a pandas DataFrame.
-
-    Uses context managers for safe connection cleanup and
-    cursor.fetch_pandas_all() for efficient reads.
-
-    Args:
-        conn_params: Base connection parameters from build_conn_params().
-        source: Source config dict with database, schema, table, columns,
-                and filters.
+        conn_params: Snowflake connection parameters from build_conn_params().
+        query_sql: SQL query string to execute (must be SELECT or WITH).
         logger: Logger instance with correlation ID.
 
     Returns:
-        pandas DataFrame containing the source data.
+        pandas DataFrame containing the query results.
+
+    Raises:
+        ValueError: If the SQL contains disallowed DML/DDL keywords.
     """
-    query = build_source_query(source)
-    source_name = source["name"]
-    logger.info(f"Reading source '{source_name}' from Snowflake")
+    stripped = query_sql.strip().rstrip(";").strip()
+    if not stripped.upper().startswith(("SELECT", "WITH")):
+        raise ValueError("Query SQL must start with SELECT or WITH (CTE).")
+    if _DISALLOWED_SQL.search(stripped):
+        raise ValueError(
+            "Query SQL contains disallowed DML/DDL keywords. "
+            "Only SELECT queries are permitted against Snowflake."
+        )
 
-    per_source_params = {
-        **conn_params,
-        "database": source["database"],
-        "schema": source["schema"],
-    }
+    logger.info("Executing SQL query against Snowflake via DBAPI connector")
 
-    with snowflake.connector.connect(**per_source_params) as conn:
+    with snowflake.connector.connect(**conn_params) as conn:
         with conn.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(stripped)
             df = cursor.fetch_pandas_all()
 
     row_count = len(df)
-    logger.info(f"Source '{source_name}': {row_count} rows read")
+    logger.info(f"Snowflake query returned {row_count} rows")
 
     return df

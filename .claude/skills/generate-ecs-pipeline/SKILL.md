@@ -1,6 +1,6 @@
 ---
 name: generate-ecs-pipeline
-description: Generates a Python+Pandas ECS Fargate task from a pipeline config. Includes Dockerfile and entrypoint script. Use when compute.engine is ecs.
+description: Deploys the generic ECS Fargate Python+Pandas pipeline by copying templates, Dockerfile, and shared modules to pipelines/generic/ecs/. Use when compute.engine is ecs.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -8,11 +8,24 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-ecs-pipeline
 
 ## Description
-Generates a containerized Python+Pandas ETL job for ECS Fargate. This skill is
-invoked by `/generate-pipeline` when `compute.engine` is `ecs`.
+Deploys the generic ECS Fargate Python+Pandas pipeline by copying template files,
+Dockerfile, and shared modules to `pipelines/generic/ecs/`. Pipeline code is GENERIC
+and SHARED -- this skill does NOT generate per-product code. The generic pipeline reads
+a config YAML at runtime (passed via `--config-path` argument) to determine source
+connection, query SQL, target table, and reconciliation rules.
 
 Uses the same Python+Pandas pattern as Lambda (shared `snowflake_reader_pandas.py`,
 `iceberg_writer_pyiceberg.py`) but runs as a Docker container with no timeout limit.
+
+This skill is invoked by `/generate-pipeline` when `compute.engine` is `ecs`.
+
+## Architecture
+
+- The generic ECS pipeline is a standalone Python script running in a Docker container
+- At runtime, it takes `--config-path` (S3 path) and `--env` as arguments
+- It downloads the config YAML, executes `query.sql` against Snowflake, writes to Iceberg
+- One generic Docker image serves ALL ECS-based data products
+- The config YAML (with `query.sql`) is the only product-specific artifact
 
 ## Prerequisites
 This skill assumes `/validate-config` and `/validate-connection` have already run and
@@ -23,240 +36,153 @@ run both validators first.
 - No timeout limit (unlike Lambda's 15 minutes).
 - Runs as a Docker container on ECS Fargate.
 - Entry point is a standalone Python script (`main.py`), not a Lambda handler.
-- Generates a Dockerfile based on corporate base image from ECR.
-- Suitable for medium-to-large datasets that exceed Lambda memory limits.
-- Generates three output files: entrypoint, Dockerfile, requirements.txt.
+- Includes a Dockerfile based on corporate base image from ECR.
+- Uses `sys.exit(0)`/`sys.exit(1)` for exit codes (not Lambda JSON returns).
+- Suitable for medium-to-large datasets that exceed Lambda limits.
 
 ## Inputs
 - Pipeline config YAML path via `$ARGUMENTS`
 - If no path provided, scan the `configs/` directory for `.yaml` files
 
-## Templates
-Read these templates if available for boilerplate patterns. Generate code directly
-from config values regardless of whether templates exist.
+## Steps
 
-- `templates/python/ecs_entrypoint.py` -- ECS-specific boilerplate
-- `templates/python/Dockerfile` -- Dockerfile template
-- `templates/python/snowflake_reader_pandas.py` -- shared with Lambda
-- `templates/python/iceberg_writer_pyiceberg.py` -- shared with Lambda
-- `templates/common/reconciliation.py` -- shared reconciliation logic
+### Step 1: Read Pipeline Config
 
-## Output
-- `pipelines/{product.name}/ecs_jobs/{product.name}_main.py` (entrypoint)
-- `pipelines/{product.name}/ecs_jobs/Dockerfile`
-- `pipelines/{product.name}/ecs_jobs/requirements.txt`
+1. Read the pipeline config YAML from `$ARGUMENTS` (or scan `configs/`).
+2. Parse and extract `product`, `compute`, `source`, `query`, `target`,
+   `reconciliation`, `runtime` sections.
+3. Verify `compute.engine` is `ecs`.
 
-## Code Generation Steps
+### Step 2: Deploy Generic ECS Pipeline
 
-### Sub-step 1: Generate Entrypoint Script
+Copy the following files from `templates/` to `pipelines/generic/ecs/`:
 
-Generate a standalone Python script with `if __name__ == "__main__"` entry point.
-The entrypoint uses the same Python+Pandas patterns as the Lambda skill but with
-a `main()` function instead of `handler(event, context)`.
+1. `templates/python/ecs_entrypoint.py` -> `pipelines/generic/ecs/ecs_entrypoint.py`
+2. `templates/python/snowflake_reader_pandas.py` -> `pipelines/generic/ecs/snowflake_reader_pandas.py`
+3. `templates/python/iceberg_writer_pyiceberg.py` -> `pipelines/generic/ecs/iceberg_writer_pyiceberg.py`
+4. `templates/common/reconciliation.py` -> `pipelines/generic/ecs/reconciliation.py`
+5. `templates/common/data_quality.py` -> `pipelines/generic/ecs/data_quality.py`
 
-**Module docstring**: Include job name, product info, "ECS Fargate -- Python+Pandas".
+Create the `pipelines/generic/ecs/` directory if it does not exist. If it already
+exists, overwrite with the latest templates.
 
-**Imports** (same as Lambda):
-```python
-import os, sys, logging, uuid, json, argparse
-from datetime import datetime
-import boto3
-import snowflake.connector
-import pandas as pd
-from pyiceberg.catalog import load_catalog
-import pyarrow as pa
-```
+### Step 3: Deploy Dockerfile
 
-**Argument parsing**:
-```python
-def parse_args():
-    parser = argparse.ArgumentParser(description=f"ECS ETL job for {product_name}")
-    parser.add_argument("--env",
-        default=os.environ.get("ENV", "prod"),
-        help="Environment (dev/staging/prod)")
-    parser.add_argument("--job-name",
-        default=None,
-        help="Job name for logging (defaults to adp-{domain}-{product}-etl-{env})")
-    args = parser.parse_args()
-    return args
-```
+Copy or verify the Dockerfile from `templates/python/Dockerfile` to
+`pipelines/generic/ecs/Dockerfile`.
 
-Use `parser.parse_args()` (not `parse_known_args()`) so misspelled arguments
-cause an immediate, descriptive error. Read `--env` default from the `ENV`
-environment variable (set in the ECS task definition) to keep the Docker
-image environment-agnostic.
-
-**Main function structure**:
-```python
-def main():
-    args = parse_args()
-    correlation_id = str(uuid.uuid4())
-    # ... logging setup ...
-    logger.info(f"Starting ECS job {args.job_name} in environment {args.env}")
-    logger.info(f"Correlation ID: {correlation_id}")
-
-    try:
-        # ... data processing (same as Lambda sub-steps 6-11) ...
-        logger.info("Job completed successfully.")
-        sys.exit(0)
-    except Exception as e:
-        logger.error("Job failed. See traceback below.", exc_info=True)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-```
-
-Key ECS-specific patterns:
-- Use `sys.exit(0)` on success and `sys.exit(1)` on failure for container exit codes.
-- ECS/Step Functions detect failure via non-zero exit code.
-- No Lambda-style JSON return -- exit codes are the signal.
-- Do NOT include `str(e)` in log messages -- use `exc_info=True` instead
-  and rely on `correlation_id` to correlate back to CloudWatch logs.
-
-### Sub-step 2: Data Processing (Shared with Lambda)
-
-The data processing logic inside the `try` block is identical to the Lambda skill
-(Sub-steps 6-11 in `/generate-lambda-pipeline`). **Do not copy the Lambda import
-block -- use the ECS import block from Sub-step 1 above, which includes `sys`
-and `argparse`.**
-
-- **Source reading**: Snowflake via `snowflake-connector-python` + `cursor.fetch_pandas_all()`
-  with OAuth token from Secrets Manager, proxy env vars.
-  Note: `connection` is nested inside each source entry (`sources[N].connection.*`),
-  not at the top level of the config. The DBAPI connector uses `proxy_host`/`proxy_port`
-  only (not `use_proxy`, which is a Spark connector key).
-- **Joins**: `pandas.merge()` with `how` mapping (`full` -> `outer`).
-- **Column mappings**: Direct pandas operations (e.g., `pd.to_datetime().dt.to_period()`).
-  Do NOT use `pd.eval()` for SQL-style expressions.
-- **Aggregations**: `pandas.groupby().agg()` with function mapping
-  (`count_distinct` -> `nunique`, `avg` -> `mean`).
-- **Filters**: `df.query()` or boolean indexing for post-aggregation filters.
-- **Iceberg write**: `pyiceberg` catalog + `table.overwrite()`/`table.append()`.
-  **ECS override**: Read AWS region from
-  `os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION"))` rather
-  than `os.environ["AWS_REGION"]`. ECS Fargate does not automatically set
-  `AWS_REGION` the same way Lambda does -- it is typically available as
-  `AWS_DEFAULT_REGION` or must be injected via the task definition.
-- **Reconciliation**: Invoke reconciliation Lambda via `boto3.client("lambda").invoke()`
-  with `InvocationType="RequestResponse"`. Check `response.get("FunctionError")`
-  before reading the payload. Read payload once with `.read().decode("utf-8")`.
-  **ECS override**: On reconciliation failure, do NOT use Lambda's `return {...}`
-  pattern. Instead call `sys.exit(1)` -- return values from `main()` are ignored
-  by the container runtime. On reconciliation success, continue to `sys.exit(0)`.
-  If `reconciliation.rules` is empty or absent, log a warning and skip.
-
-Refer to `/generate-lambda-pipeline` for the detailed implementation of each
-sub-step, applying the ECS overrides noted above.
-
-### Sub-step 3: Generate Dockerfile
-
-Generate a production-ready Dockerfile that must pass `hadolint`:
-
-```dockerfile
-# Use corporate base image from ECR
-FROM {ecr_registry}/python:3.11-slim
-
-# Create non-root user early (before COPY/RUN as that user)
-RUN useradd -m appuser
-
-# Set working directory
-WORKDIR /app
-
-# Install dependencies first (layer caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code with correct ownership
-COPY --chown=appuser:appuser {product.name}_main.py .
-
-# Switch to non-root user
-USER appuser
-
-# Entry point (--env is read from ENV environment variable by default)
-CMD ["python", "{product.name}_main.py"]
-```
-
-Corporate Dockerfile requirements:
+The Dockerfile must meet corporate requirements:
 - Use corporate base image from ECR (not public Docker Hub).
-- Run as non-root user for security. Create user before COPY of application
-  code and use `--chown=appuser:appuser` on COPY to ensure correct ownership.
+- Run as non-root user for security.
 - Use `--no-cache-dir` with pip to reduce image size.
 - Layer ordering: COPY requirements.txt before application code for caching.
-- Must pass `hadolint` (the `post-codegen-docker-lint.sh` hook will check this).
-- Do NOT hardcode `--env prod` in CMD -- the environment is read from the
-  `ENV` environment variable (set in the ECS task definition) by `parse_args()`.
-- For batch ECS tasks (run-task, not services), `HEALTHCHECK` is not required
-  and is ignored by the ECS scheduler. Omit it for batch tasks. If the container
-  will be run as an ECS service, add a meaningful health check in the task
-  definition instead.
+- Must pass `hadolint`.
+- Do NOT hardcode `--env` in CMD -- the environment is read from the `ENV`
+  environment variable (set in the ECS task definition).
+- The entrypoint accepts `--config-path` as a runtime argument.
 
 Derive `{ecr_registry}` from `compute.ecr_registry` in the pipeline config.
-If absent, use the placeholder `{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com`
+If absent, use placeholder `{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com`
 and emit a warning.
 
-### Sub-step 4: Generate requirements.txt
+### Step 4: Deploy requirements.txt
 
-Same as Lambda:
+Copy or generate a `requirements.txt` at `pipelines/generic/ecs/requirements.txt`:
+
 ```
 snowflake-connector-python[pandas]>=3.0.0
 pandas>=2.0.0
 pyiceberg[glue]>=0.5.0
 pyarrow>=12.0.0
 boto3>=1.28.0
+pyyaml>=6.0
 ```
+
+Note: `pyyaml` is included because the generic pipeline parses the config YAML at runtime.
+
+### Step 5: Verify Generic Pipeline Content
+
+Read the deployed `ecs_entrypoint.py` and verify it includes:
+
+1. **Config-driven execution**: The entrypoint reads `--config-path` from argparse,
+   downloads the config YAML from S3, and loads source, query, target, and
+   reconciliation settings at runtime.
+
+2. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
+   with proxy support via `snowflake-connector-python`. Uses `source.connection`
+   from the config (single source object).
+
+3. **Query execution**: Executes `query.sql` from the config against Snowflake via
+   the DBAPI cursor. Uses `cursor.fetch_pandas_all()` for the result set.
+
+4. **Iceberg write**: Uses `pyiceberg` catalog to write results to the target table.
+   Reads AWS region from `os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION"))`.
+
+5. **Reconciliation**: Synchronous invocation of the reconciliation Lambda.
+   On failure, calls `sys.exit(1)` (not Lambda-style `return`).
+
+6. **Structured logging**: Correlation ID per execution via `logging.LoggerAdapter`.
+
+7. **Error handling**: Top-level try/except in `main()`. Uses `sys.exit(1)` on failure.
+
+8. **Connection safety**: Context managers for Snowflake connections.
+
+If any of these are missing from the template, report a warning.
 
 ## Cross-Cutting Concerns
 
-1. **Structured logging**: Correlation ID per invocation via `logging.LoggerAdapter`.
+1. **Structured logging**: Correlation ID per execution via `logging.LoggerAdapter`.
    Formatter: `%(asctime)s | %(levelname)s | %(correlation_id)s | %(message)s`.
 
 2. **Error handling**: Top-level try/except in `main()`. Use `sys.exit(1)` on failure
-   (ECS/Step Functions detect via container exit code). Do NOT include `str(e)`
-   in log messages -- use `exc_info=True` and rely on `correlation_id` to
-   correlate back to CloudWatch logs.
+   (ECS/Step Functions detect via container exit code).
 
-3. **Reconciliation**: Synchronously invoke the reconciliation Lambda
-   (`adp-{product.name}-recon-{env}`) using `InvocationType="RequestResponse"`.
-   Check `response.get("FunctionError")` before reading the payload. On failure,
-   call `sys.exit(1)` (not `return` -- ECS signals failure via exit code).
+3. **Reconciliation**: Synchronously invoke the reconciliation Lambda. On failure,
+   call `sys.exit(1)`.
 
-4. **Connection safety**: Use context managers (`with ... as conn:`) for
-   Snowflake connections to ensure cleanup on exceptions. Pass `database`
-   and `schema` as `connect()` parameters.
+4. **Connection safety**: Use context managers for Snowflake connections.
+
+5. **Config-driven**: All product-specific behavior comes from the config YAML.
+   No hardcoded product names, table names, or SQL in the pipeline code.
 
 ## Output Summary
 
 ```
 ========================================
-ECS PIPELINE GENERATION COMPLETE
+ECS GENERIC PIPELINE DEPLOYED
 Config: [config-file-path]
 Engine: ecs
 ========================================
 
-Generated Files:
-  1. pipelines/{product.name}/ecs_jobs/{product.name}_main.py (entrypoint)
-  2. pipelines/{product.name}/ecs_jobs/Dockerfile
-  3. pipelines/{product.name}/ecs_jobs/requirements.txt
+Generic Pipeline:
+  Location: pipelines/generic/ecs/
+  Files:
+    1. ecs_entrypoint.py (generic ECS entrypoint)
+    2. snowflake_reader_pandas.py (shared pandas reader)
+    3. iceberg_writer_pyiceberg.py (shared PyIceberg writer)
+    4. reconciliation.py (shared reconciliation)
+    5. data_quality.py (shared data quality)
+    6. Dockerfile (corporate base image, hadolint-compliant)
+    7. requirements.txt (Python dependencies)
 
-Key Differences from Lambda:
+Runtime Behavior:
+  - Entrypoint reads config from --config-path at runtime
+  - Downloads config YAML from S3
+  - Executes query.sql from config against Snowflake
+  - Writes results to Iceberg target defined in config
+  - Invokes reconciliation Lambda with rules from config
+
+Key Properties:
   - Standalone main.py (not Lambda handler)
   - Docker container on ECS Fargate
   - No timeout limit
   - sys.exit() for exit codes
-
-Features:
-  - Sources: [N] Snowflake sources via DBAPI + pandas
-  - Joins: [N] via pandas.merge()
-  - Aggregations: [N] via pandas.groupby().agg()
-  - Reconciliation: Lambda invocation
-  - Logging: Structured with correlation ID
-  - Dockerfile: Corporate base image, hadolint-compliant
+  - Config-driven: no per-product code generation
 
 Next Steps:
-  - Review generated code
+  - Generic pipeline is shared -- do not modify per product
+  - Product config: [config-file-path]
   - Build and push Docker image to ECR
-  - Run /generate-step-function for orchestration
-  - Run /generate-terraform for infrastructure
+  - Run task with --config-path s3://bucket/configs/{product.name}.yaml --env {env}
 ========================================
 ```

@@ -6,6 +6,11 @@ at code-generation time. Produces a structured JSON lineage document
 that can be stored alongside Iceberg table metadata or published to
 a lineage catalog.
 
+In the SQL-driven architecture, lineage is derived from the query.sql
+field and the source connection config, rather than from structured
+transformations. Table references and column aliases are extracted from
+the SQL using pattern matching.
+
 Used by the Spec Generator Agent and Pipeline Generator Agent.
 
 Usage:
@@ -15,6 +20,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -37,24 +43,32 @@ def extract_source_lineage(config):
     """
     Extract source metadata from the config.
 
-    Returns a list of source descriptors with system, database, schema,
-    table, and column information.
+    Parses fully-qualified table references from query.sql and combines
+    with source connection info.
     """
     sources = []
-    for source in config.get("sources", []):
-        columns = source.get("columns", [])
-        if isinstance(columns, str) and columns == "*":
-            columns = ["*"]
+    source_conn = config.get("source", {})
+    sql = config.get("query", {}).get("sql", "")
 
-        sources.append({
-            "name": source["name"],
-            "system": source.get("type", "snowflake"),
-            "database": source["database"],
-            "schema": source["schema"],
-            "table": source["table"],
-            "columns": columns,
-            "filters": source.get("filters", []),
-        })
+    # Extract fully-qualified table references (DATABASE.SCHEMA.TABLE)
+    fqn_pattern = re.compile(
+        r'"?(\w+)"?\."?(\w+)"?\."?(\w+)"?',
+    )
+    seen = set()
+    for match in fqn_pattern.finditer(sql):
+        db, schema, table = match.group(1), match.group(2), match.group(3)
+        key = f"{db}.{schema}.{table}"
+        if key not in seen:
+            seen.add(key)
+            sources.append({
+                "name": table.lower(),
+                "system": source_conn.get("type", "snowflake"),
+                "database": db,
+                "schema": schema,
+                "table": table,
+                "connection_account": source_conn.get("connection", {}).get("account", ""),
+            })
+
     return sources
 
 
@@ -73,60 +87,106 @@ def extract_target_lineage(config):
     }
 
 
+def _split_select_columns(select_clause):
+    """Split a SELECT clause by commas, respecting parentheses nesting."""
+    parts = []
+    depth = 0
+    current = []
+    for char in select_clause:
+        if char == '(':
+            depth += 1
+            current.append(char)
+        elif char == ')':
+            depth -= 1
+            current.append(char)
+        elif char == ',' and depth == 0:
+            parts.append(''.join(current))
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append(''.join(current))
+    return parts
+
+
 def extract_column_mappings(config):
     """
-    Derive source-to-target column mappings from transformations.
+    Derive source-to-target column mappings from query.sql.
 
-    Traces columns through joins, aggregations, and column_mappings
-    to produce a lineage graph from source columns to target columns.
+    Parses the final SELECT clause to extract column expressions and
+    their aliases, producing a lineage graph from SQL expressions to
+    target column names.
     """
     mappings = []
-    transformations = config.get("transformations", {})
+    sql = config.get("query", {}).get("sql", "")
+    if not sql:
+        return mappings
 
-    # Direct column mappings (explicit rename/expression)
-    for cm in transformations.get("column_mappings", []):
+    # Extract the final SELECT clause
+    select_pattern = re.compile(
+        r'\bSELECT\b(.*?)(?:\bFROM\b)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    matches = select_pattern.findall(sql)
+    if not matches:
+        return mappings
+
+    final_select = matches[-1]
+    col_exprs = _split_select_columns(final_select)
+
+    for expr in col_exprs:
+        expr = expr.strip()
+        if not expr:
+            continue
+
+        # Extract alias
+        alias_match = re.search(r'\bAS\s+(\w+)\s*$', expr, re.IGNORECASE)
+        if alias_match:
+            col_name = alias_match.group(1)
+            source_expr = expr[:alias_match.start()].strip()
+        else:
+            ident_match = re.search(r'(\w+)\s*$', expr)
+            col_name = ident_match.group(1) if ident_match else expr.strip()
+            source_expr = expr.strip()
+
+        # Determine mapping type from expression
+        upper = source_expr.upper()
+        if re.search(r'\bSUM\b|\bAVG\b|\bCOUNT\b|\bMIN\b|\bMAX\b', upper):
+            mapping_type = "aggregation"
+        elif re.search(r'\bDATE_TRUNC\b', upper):
+            mapping_type = "date_transform"
+        else:
+            mapping_type = "column_reference"
+
         mappings.append({
-            "source": cm["source"],
-            "target": cm["target"],
-            "transformation": cm.get("expression", cm["source"]),
-            "type": "column_mapping",
+            "source": source_expr,
+            "target": col_name,
+            "transformation": source_expr,
+            "type": mapping_type,
         })
-
-    # Aggregation-derived mappings
-    for agg in transformations.get("aggregations", []):
-        for metric in agg.get("metrics", []):
-            mappings.append({
-                "source": metric["column"],
-                "target": metric["alias"],
-                "transformation": f"{metric['function'].upper()}({metric['column']})",
-                "type": "aggregation",
-            })
-        # Group-by columns are pass-through
-        for group_col in agg.get("group_by", []):
-            mappings.append({
-                "source": group_col,
-                "target": group_col,
-                "transformation": "GROUP_BY",
-                "type": "group_by",
-            })
 
     return mappings
 
 
-def extract_join_lineage(config):
-    """Extract join relationship metadata."""
-    joins = []
-    for join in config.get("transformations", {}).get("joins", []):
-        joins.append({
-            "left": join["left"],
-            "right": join["right"],
-            "type": join["type"],
-            "keys": [
-                {"left_key": k["left_key"], "right_key": k["right_key"]}
-                for k in join.get("keys", [])
-            ],
-        })
-    return joins
+def extract_cte_lineage(config):
+    """Extract CTE definitions from the SQL query."""
+    ctes = []
+    sql = config.get("query", {}).get("sql", "")
+    if not sql:
+        return ctes
+
+    # Extract CTE names from WITH clause
+    cte_pattern = re.compile(
+        r'\b(\w+)\s+AS\s*\(',
+        re.IGNORECASE,
+    )
+    for match in cte_pattern.finditer(sql):
+        cte_name = match.group(1)
+        # Skip SQL keywords that might match
+        if cte_name.upper() not in ('SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT'):
+            ctes.append({"name": cte_name})
+
+    return ctes
 
 
 def generate_lineage(config):
@@ -148,17 +208,10 @@ def generate_lineage(config):
         },
         "sources": extract_source_lineage(config),
         "target": extract_target_lineage(config),
-        "joins": extract_join_lineage(config),
+        "ctes": extract_cte_lineage(config),
         "column_mappings": extract_column_mappings(config),
-        "filters": {
-            "source_filters": {
-                source["name"]: source.get("filters", [])
-                for source in config.get("sources", [])
-            },
-            "post_transform_filters": config.get("transformations", {}).get(
-                "filters", []
-            ),
-        },
+        "query_sql": config.get("query", {}).get("sql", ""),
+        "query_description": config.get("query", {}).get("description", ""),
     }
 
     return lineage
@@ -192,9 +245,9 @@ def main():
         print(lineage_json)
 
     logger.info(
-        "Generated lineage: %d sources, %d joins, %d column mappings",
+        "Generated lineage: %d sources, %d CTEs, %d column mappings",
         len(lineage["sources"]),
-        len(lineage["joins"]),
+        len(lineage["ctes"]),
         len(lineage["column_mappings"]),
     )
 
