@@ -257,22 +257,16 @@ to the appropriate engine-specific skill.
 2. Validate the config against the schema (invoke /validate-config first).
 3. Validate the Snowflake connection (invoke /validate-connection).
 4. Read `compute.engine` from the config.
-5. Delegate to the engine-specific skill:
-   - `glue` → Generate PySpark Glue job (inline -- this is the default path):
-     a. For each source, generate Snowflake read block (Spark connector, OAuth + proxy).
-     b. Generate joins, transformations, aggregations using PySpark DataFrame API.
-     c. Generate Iceberg write block via Glue Catalog.
-     d. Wrap in Glue job boilerplate (GlueContext, job.init/commit).
-     e. Templates: `templates/pyspark/glue_job_boilerplate.py`, `templates/pyspark/snowflake_reader_spark.py`, `templates/pyspark/iceberg_writer_spark.py`
-     f. Output: `pipelines/{product_name}/glue_jobs/{job_name}.py`
-   - `emr` → Invoke /generate-emr-pipeline
-   - `lambda` → Invoke /generate-lambda-pipeline
-   - `ecs` → Invoke /generate-ecs-pipeline
-6. Invoke /generate-step-function to create the orchestration ASL (adapts resource type per engine).
-7. Add structured logging, error handling, and reconciliation calls.
+5. Delegate to the engine-specific skill — deploy generic shared pipeline to `pipelines/generic/{engine}/`:
+   - `glue` → Copy generic templates (`glue_job_boilerplate.py`, `snowflake_reader_spark.py`, `iceberg_writer_spark.py`, `reconciliation.py`) to `pipelines/generic/glue/`
+   - `emr` → Invoke /generate-emr-pipeline (deploys to `pipelines/generic/emr/`)
+   - `lambda` → Invoke /generate-lambda-pipeline (deploys to `pipelines/generic/lambda/`)
+   - `ecs` → Invoke /generate-ecs-pipeline (deploys to `pipelines/generic/ecs/`)
+6. Invoke /generate-step-function to create the orchestration ASL (passes `config_s3_path` per engine).
+7. Pipeline code is generic and shared — NO transformation logic, reads config at runtime via `--CONFIG_PATH`.
 
 ## Output
-- Generated ETL code at the engine-appropriate path.
+- Generic shared pipeline code at `pipelines/generic/{engine}/`. Product-specific config at `configs/{product_name}.yaml`.
 ```
 
 #### Skill: `validate-config`
@@ -293,14 +287,13 @@ allowed-tools: Read Grep Bash
 Validates a pipeline configuration YAML against the standard schema.
 
 ## Checks
-1. All required top-level keys are present (product, sources, transformations, target, reconciliation, runtime).
-2. Each source has: name, type (snowflake), database, schema, table, columns (list or "*").
-3. Each join has: left, right, keys (list of {left_key, right_key}), type (inner/left/right/full).
-4. Each transformation has: name, type (sql/pyspark), expression.
-5. Target has: catalog, database, table, s3_path, write_mode, partition_by (optional).
-6. Reconciliation has at least one rule with: type (row_count/sum/distinct_count), source_expr, target_expr, tolerance_pct.
-7. Runtime has: glue_version, worker_type, num_workers, timeout_minutes, tags (dict).
-8. No Snowflake write operations exist anywhere in transformations.
+1. All required top-level keys are present (product, compute, source, query, target, reconciliation, runtime).
+2. `source.connection` has: account, warehouse, role, authenticator (must be oauth).
+3. `query.sql` starts with SELECT or WITH (CTE) and contains no DML/DDL keywords.
+4. Target has: catalog, database, table, s3_path, write_mode, partition_by (optional).
+5. Reconciliation has at least one rule with: type (row_count/sum/distinct_count/null_check), source_expr, target_expr, tolerance_pct.
+6. Runtime has: timeout_minutes, plus engine-specific fields per compute.engine.
+7. No Snowflake write operations exist in query SQL.
 
 ## Output
 - Validation result: PASS or FAIL with list of errors.
@@ -373,7 +366,7 @@ Generates an AWS Step Function (ASL JSON) that orchestrates the pipeline.
       - If PASS -> NotifySuccess (SNS)
       - If FAIL -> NotifyFailure (SNS) -> MarkFailed
 3. Include error catchers on each state that route to a global error handler.
-4. Write ASL to pipelines/{product_name}/step_functions/{product_name}_orchestrator.asl.json.
+4. Write ASL JSON that passes `config_s3_path` to the generic pipeline (Glue: `--CONFIG_PATH`, EMR: `--config-path`, Lambda: `config_path` in Payload, ECS: `--config-path` in Command).
 
 ## Output
 - Step Function ASL JSON file.
@@ -406,7 +399,7 @@ Generates reconciliation SQL/PySpark checks based on the reconciliation section 
 4. Output includes PASS/FAIL per rule and an overall status.
 
 ## Output
-- Reconciliation module at pipelines/{product_name}/recon/{product_name}_recon.py.
+- Shared reconciliation module at pipelines/generic/common/reconciliation.py (or engine-specific location).
 ```
 
 #### Skill: `validate-connection`
@@ -465,13 +458,11 @@ Generates a PySpark ETL job for EMR, using SparkSession directly (no GlueContext
 - Arguments parsed via argparse instead of getResolvedOptions.
 
 ## Steps
-1. Read the pipeline config YAML.
-2. Generate SparkSession with Iceberg catalog configuration.
-3. For each source: generate Snowflake read block (same Spark connector, OAuth + proxy).
-4. Generate joins, transformations, aggregations using PySpark DataFrame API.
-5. Generate Iceberg write block (same API: df.writeTo().append/overwritePartitions).
-6. Wrap in EMR boilerplate (argparse, SparkSession.builder, structured logging).
-7. Add reconciliation calls.
+1. Copy generic EMR templates to `pipelines/generic/emr/`.
+2. Templates are runnable code that reads config at runtime via `--config-path`.
+3. Pipeline executes `config['query']['sql']` against Snowflake via Spark connector.
+4. Writes result to Iceberg via `df.writeTo()`.
+5. No transformation logic in pipeline code — all transforms in config SQL.
 
 ## Templates Used
 - templates/pyspark/emr_job_boilerplate.py
@@ -480,7 +471,7 @@ Generates a PySpark ETL job for EMR, using SparkSession directly (no GlueContext
 - templates/common/reconciliation.py
 
 ## Output
-- Generated PySpark file at pipelines/{product_name}/emr_jobs/{job_name}.py.
+- Generic shared pipeline at `pipelines/generic/emr/` (not per-product).
 ```
 
 #### Skill: `generate-lambda-pipeline`
@@ -508,15 +499,11 @@ Generates a Python+Pandas Lambda function for lightweight ETL jobs.
 - 15-minute timeout and 10 GB memory limit -- validate dataset size in config.
 
 ## Steps
-1. Read the pipeline config YAML.
-2. Validate that the data volume is appropriate for Lambda (check config metadata).
-3. Generate the Lambda handler function.
-4. For each source: generate Snowflake read using snowflake-connector-python + pandas.
-5. Generate joins using pandas merge().
-6. Generate aggregations using pandas groupby().agg().
-7. Generate Iceberg write using pyiceberg Table API.
-8. Add structured logging (Python logging module) and error handling.
-9. Generate requirements.txt for Lambda layer packaging.
+1. Copy generic Lambda templates to `pipelines/generic/lambda/`.
+2. Templates are runnable code that reads config at runtime via `config_path` event key or `CONFIG_PATH` env var.
+3. Pipeline executes `config['query']['sql']` against Snowflake via snowflake-connector-python.
+4. Writes result to Iceberg via pyiceberg.
+5. No transformation logic in pipeline code — all transforms in config SQL.
 
 ## Templates Used
 - templates/python/lambda_handler.py
@@ -525,8 +512,7 @@ Generates a Python+Pandas Lambda function for lightweight ETL jobs.
 - templates/common/reconciliation.py
 
 ## Output
-- Generated Lambda handler at pipelines/{product_name}/lambda_jobs/{job_name}.py.
-- Generated requirements.txt at pipelines/{product_name}/lambda_jobs/requirements.txt.
+- Generic shared pipeline at `pipelines/generic/lambda/` (not per-product).
 ```
 
 #### Skill: `generate-ecs-pipeline`
@@ -554,19 +540,12 @@ Generates a containerized Python+Pandas ETL job for ECS Fargate.
 - Suitable for medium-to-large datasets that exceed Lambda memory limits.
 
 ## Steps
-1. Read the pipeline config YAML.
-2. Generate the Python entrypoint script (main.py).
-3. For each source: generate Snowflake read using snowflake-connector-python + pandas
-   (same templates as Lambda).
-4. Generate joins, aggregations, filters using pandas (same as Lambda).
-5. Generate Iceberg write using pyiceberg (same as Lambda).
-6. Generate Dockerfile:
-   a. Use corporate base image from ECR.
-   b. Install dependencies from requirements.txt.
-   c. Copy entrypoint script.
-   d. Set CMD to run the entrypoint.
-7. Generate requirements.txt.
-8. Add structured logging and error handling.
+1. Copy generic ECS templates to `pipelines/generic/ecs/`.
+2. Templates are runnable code that reads config at runtime via `--config-path`.
+3. Pipeline executes `config['query']['sql']` against Snowflake via snowflake-connector-python.
+4. Writes result to Iceberg via pyiceberg.
+5. Dockerfile uses corporate base image from ECR.
+6. No transformation logic in pipeline code — all transforms in config SQL.
 
 ## Templates Used
 - templates/python/ecs_entrypoint.py
@@ -576,9 +555,7 @@ Generates a containerized Python+Pandas ETL job for ECS Fargate.
 - templates/common/reconciliation.py
 
 ## Output
-- Generated entrypoint at pipelines/{product_name}/ecs_jobs/{job_name}.py.
-- Generated Dockerfile at pipelines/{product_name}/ecs_jobs/Dockerfile.
-- Generated requirements.txt at pipelines/{product_name}/ecs_jobs/requirements.txt.
+- Generic shared pipeline at `pipelines/generic/ecs/` (not per-product).
 ```
 
 ### 2.3 Subagent Structure
@@ -623,47 +600,36 @@ server and extract a structured requirement object.
 ## Process
 1. Call JIRA MCP to fetch the ticket: title, description, acceptance criteria, labels, components.
 2. Parse the description to identify:
-   - Source datasets (name, system, database, schema, table)
-   - Required transformations (joins, filters, aggregations, column mappings)
+   - Source connection details (Snowflake account, warehouse, role)
+   - SQL transformation logic (CTEs, joins, aggregations, filters) to produce `suggested_sql`
    - Target table details (domain, product name, table name)
    - Data quality expectations (SLAs, thresholds)
    - Schedule requirements (frequency, cron expression)
-3. If any required field is ambiguous, add it to an "assumptions" list.
-4. Produce a structured JSON output.
+3. Generate `suggested_sql` using CTEs with fully-qualified Snowflake table names.
+4. If any required field is ambiguous, add it to an "assumptions" list.
+5. Produce a structured JSON output.
 
 ## Output Schema
 {
   "ticket_key": "string",
   "product_name": "string",
   "domain": "string",
-  "sources": [
-    {
-      "name": "string",
-      "system": "snowflake",
-      "database": "string",
-      "schema": "string",
-      "table": "string",
-      "columns": ["string"],
-      "filters": ["string"]
+  "source": {
+    "type": "snowflake",
+    "connection": {
+      "account": "string",
+      "warehouse": "string",
+      "role": "string",
+      "authenticator": "oauth",
+      "proxy": {
+        "http_proxy": "string",
+        "https_proxy": "string"
+      }
     }
-  ],
-  "transformations": {
-    "joins": [
-      {
-        "left": "string",
-        "right": "string",
-        "keys": [{"left_key": "string", "right_key": "string"}],
-        "type": "inner|left|right|full"
-      }
-    ],
-    "aggregations": [
-      {
-        "group_by": ["string"],
-        "metrics": [{"column": "string", "function": "sum|count|avg|min|max", "alias": "string"}]
-      }
-    ],
-    "filters": ["string"],
-    "column_mappings": [{"source": "string", "target": "string", "expression": "string"}]
+  },
+  "query": {
+    "sql": "string (full SQL with CTEs, joins, aggregations using fully-qualified table names)",
+    "description": "string"
   },
   "target": {
     "domain": "string",
@@ -675,6 +641,9 @@ server and extract a structured requirement object.
   "schedule": {
     "frequency": "string",
     "cron": "string"
+  },
+  "reconciliation": {
+    "rules": [{"name": "string", "type": "row_count|sum|distinct_count|null_check", "source_expr": "string", "target_expr": "string", "tolerance_pct": "number"}]
   },
   "data_quality": {
     "expectations": ["string"],
@@ -1218,7 +1187,8 @@ Every agent reads from it. Below is the full schema.
 # JSON Schema (expressed in YAML for readability)
 pipeline_config_schema:
   type: object
-  required: [product, compute, sources, transformations, target, reconciliation, runtime]
+  required: [product, compute, source, query, target, reconciliation, runtime]
+  additionalProperties: false
   properties:
 
     product:
@@ -1250,92 +1220,35 @@ pipeline_config_schema:
           enum: [pyspark, python]
           description: "Auto-derived: glue/emr -> pyspark, lambda/ecs -> python. Can be set explicitly."
 
-    sources:
-      type: array
-      minItems: 1
-      items:
-        type: object
-        required: [name, type, connection, database, schema, table]
-        properties:
-          name: { type: string }
-          type: { type: string, enum: [snowflake] }
-          connection:
-            type: object
-            required: [account, warehouse, role, authenticator]
-            properties:
-              account: { type: string }
-              warehouse: { type: string }
-              role: { type: string }
-              authenticator: { type: string, enum: [oauth] }
-              proxy:
-                type: object
-                required: [http_proxy, https_proxy]
-                properties:
-                  http_proxy: { type: string }
-                  https_proxy: { type: string }
-          database: { type: string }
-          schema: { type: string }
-          table: { type: string }
-          columns: { oneOf: [{ type: string, const: "*" }, { type: array, items: { type: string } }] }
-          filters: { type: array, items: { type: string } }
-
-    transformations:
+    source:
       type: object
+      description: "Snowflake connection configuration (singular). Table/column selection is in query.sql."
+      required: [type, connection]
       properties:
-        joins:
-          type: array
-          items:
-            type: object
-            required: [left, right, keys, type]
-            properties:
-              left: { type: string }
-              right: { type: string }
-              keys:
-                type: array
-                items:
-                  type: object
-                  required: [left_key, right_key]
-                  properties:
-                    left_key: { type: string }
-                    right_key: { type: string }
-              type: { type: string, enum: [inner, left, right, full] }
-        aggregations:
-          type: array
-          items:
-            type: object
-            required: [group_by, metrics]
-            properties:
-              group_by: { type: array, items: { type: string } }
-              metrics:
-                type: array
-                items:
-                  type: object
-                  required: [column, function, alias]
-                  properties:
-                    column: { type: string }
-                    function: { type: string, enum: [sum, count, avg, min, max, count_distinct] }
-                    alias: { type: string }
-        filters:
-          type: array
-          items: { type: string }
-        column_mappings:
-          type: array
-          items:
-            type: object
-            required: [source, target]
-            properties:
-              source: { type: string }
-              target: { type: string }
-              expression: { type: string }
-        custom_sql:
-          type: array
-          items:
-            type: object
-            required: [name, sql]
-            properties:
-              name: { type: string }
-              sql: { type: string }
-              description: { type: string }
+        type: { type: string, enum: [snowflake] }
+        connection:
+          type: object
+          required: [account, warehouse, role, authenticator]
+          properties:
+            account: { type: string }
+            warehouse: { type: string }
+            role: { type: string }
+            authenticator: { type: string, enum: [oauth] }
+            proxy:
+              type: object
+              required: [http_proxy, https_proxy]
+              properties:
+                http_proxy: { type: string }
+                https_proxy: { type: string }
+
+    query:
+      type: object
+      description: "SQL query with all transformation logic (CTEs, joins, aggregations). No temp tables."
+      required: [sql]
+      properties:
+        sql: { type: string, minLength: 10, description: "Full SQL query starting with SELECT or WITH" }
+        description: { type: string }
+        parameters: { type: object, additionalProperties: { type: string } }
 
     target:
       type: object
@@ -1453,91 +1366,55 @@ compute:
     frequency: daily
     cron: "0 6 * * *"  # 6 AM UTC daily
 
-sources:
-  - name: customer_orders
-    type: snowflake
-    connection:
-      account: company-prod.us-east-1
-      warehouse: ANALYTICS_WH
-      role: ADP_READER_ROLE
-      authenticator: oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: PROD_DB
-    schema: SALES
-    table: CUSTOMER_ORDERS
-    columns:
-      - order_id
-      - customer_id
-      - product_id
-      - order_date
-      - quantity
-      - unit_price
-      - total_amount
-      - order_status
-    filters:
-      - "order_status = 'COMPLETED'"
-      - "order_date >= DATEADD(month, -13, CURRENT_DATE())"
+source:
+  type: snowflake
+  connection:
+    account: company-prod.us-east-1
+    warehouse: ANALYTICS_WH
+    role: ADP_READER_ROLE
+    authenticator: oauth
+    proxy:
+      http_proxy: "http://corporate-proxy.company.com:8080"
+      https_proxy: "http://corporate-proxy.company.com:8080"
 
-  - name: product_catalog
-    type: snowflake
-    connection:
-      account: company-prod.us-east-1
-      warehouse: ANALYTICS_WH
-      role: ADP_READER_ROLE
-      authenticator: oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: PROD_DB
-    schema: PRODUCTS
-    table: PRODUCT_CATALOG
-    columns:
-      - product_id
-      - product_name
-      - category
-      - subcategory
-      - brand
-    filters: []
-
-transformations:
-  joins:
-    - left: customer_orders
-      right: product_catalog
-      keys:
-        - left_key: product_id
-          right_key: product_id
-      type: inner
-
-  aggregations:
-    - group_by:
-        - "product_catalog.category"
-        - "DATE_TRUNC('month', customer_orders.order_date)"
-      metrics:
-        - column: "customer_orders.total_amount"
-          function: sum
-          alias: total_revenue
-        - column: "customer_orders.order_id"
-          function: count_distinct
-          alias: order_count
-        - column: "customer_orders.total_amount"
-          function: avg
-          alias: avg_order_value
-        - column: "customer_orders.quantity"
-          function: sum
-          alias: total_units_sold
-
-  column_mappings:
-    - source: "DATE_TRUNC('month', customer_orders.order_date)"
-      target: revenue_month
-      expression: "DATE_TRUNC('month', customer_orders.order_date)"
-    - source: "product_catalog.category"
-      target: product_category
-      expression: "product_catalog.category"
-
-  filters:
-    - "total_revenue > 0"
+query:
+  description: >
+    Joins customer_orders and product_catalog from Snowflake,
+    filters to completed orders in the last 13 months,
+    and aggregates monthly revenue by product category.
+  sql: |
+    WITH completed_orders AS (
+        SELECT
+            o."order_id",
+            o."product_id",
+            o."order_date",
+            o."quantity",
+            o."total_amount"
+        FROM "PROD_DB"."SALES"."CUSTOMER_ORDERS" o
+        WHERE o."order_status" = 'COMPLETED'
+          AND o."order_date" >= DATEADD(month, -13, CURRENT_DATE())
+    ),
+    enriched_orders AS (
+        SELECT
+            co."order_id",
+            co."order_date",
+            co."quantity",
+            co."total_amount",
+            p."category"
+        FROM completed_orders co
+        INNER JOIN "PROD_DB"."PRODUCTS"."PRODUCT_CATALOG" p
+            ON co."product_id" = p."product_id"
+    )
+    SELECT
+        eo."category" AS product_category,
+        DATE_TRUNC('month', eo."order_date") AS revenue_month,
+        SUM(eo."total_amount") AS total_revenue,
+        COUNT(DISTINCT eo."order_id") AS order_count,
+        AVG(eo."total_amount") AS avg_order_value,
+        SUM(eo."quantity") AS total_units_sold
+    FROM enriched_orders eo
+    GROUP BY eo."category", DATE_TRUNC('month', eo."order_date")
+    HAVING SUM(eo."total_amount") > 0
 
 target:
   catalog: glue_catalog
@@ -1637,8 +1514,10 @@ runtime:
 
 ### 5.1 Template Library
 
-Templates are parameterized Python files that Claude fills in using values from the config.
-They are organized into engine-scoped directories under `templates/`:
+Templates are **generic, runnable Python files** with NO `{{ placeholders }}`. They read the
+pipeline config YAML at runtime and execute the SQL query from the config against Snowflake.
+Multiple data products share the SAME pipeline code — only the config differs.
+Templates are organized into engine-scoped directories under `templates/`:
 
 ```
 templates/
@@ -1679,134 +1558,63 @@ for reads and `pyiceberg` for writes instead of Spark APIs.
 
 ```python
 """
-Glue Job: {{ job_name }}
-Product: {{ product_name }}
-Domain: {{ domain }}
-Generated by AI SDLC Pipeline Generator
-Version: {{ version }}
-"""
-import sys
-import logging
-import uuid
-from datetime import datetime
+Generic AWS Glue PySpark ETL Job
 
-from awsglue.transforms import *
+A config-driven Glue job that reads a YAML pipeline config at runtime,
+executes the SQL query from the config against Snowflake, and writes
+the result to an Apache Iceberg table on S3 via the AWS Glue Catalog.
+
+Multiple data products share this SAME code -- only the config differs.
+"""
+import sys, os, logging, uuid, json, re, tempfile
+import boto3, yaml
 from awsglue.utils import getResolvedOptions
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from pyspark.context import SparkContext
-from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 
-# ── Logging Setup ────────────────────────────────────────────────────
-correlation_id = str(uuid.uuid4())
-logger = logging.getLogger("{{ job_name }}")
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter(
-    f"%(asctime)s | %(levelname)s | {correlation_id} | %(message)s"
-)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+from snowflake_reader_spark import setup_proxy, get_oauth_token, build_sf_options, run_query
+from iceberg_writer_spark import write_to_iceberg
+from reconciliation import run_reconciliation
 
-# ── Glue / Spark Init ───────────────────────────────────────────────
-args = getResolvedOptions(sys.argv, ["JOB_NAME", "ENV"])
-sc = SparkContext()
-glueContext = GlueContext(sc)
-spark = glueContext.spark_session
-job = Job(glueContext)
-job.init(args["JOB_NAME"], args)
-
+# Accepts --CONFIG_PATH, --ENV, --correlation_id from Step Function
+args = getResolvedOptions(sys.argv, ["JOB_NAME", "CONFIG_PATH", "ENV", "correlation_id"])
+config_path = args["CONFIG_PATH"]
 env = args["ENV"]
-logger.info(f"Starting job {args['JOB_NAME']} in environment {env}")
-logger.info(f"Correlation ID: {correlation_id}")
+correlation_id = args.get("correlation_id") or str(uuid.uuid4())
 
-try:
-    # ── GENERATED CODE INSERTED HERE ─────────────────────────────
-    {{ generated_code }}
-    # ── END GENERATED CODE ───────────────────────────────────────
-
-    logger.info("Job completed successfully.")
-    job.commit()
-
-except Exception as e:
-    logger.error(f"Job failed: {str(e)}", exc_info=True)
-    raise
+# Initialize Glue job, load config, validate SQL, execute query, write to Iceberg
+# See templates/pyspark/glue_job_boilerplate.py for full implementation
 ```
 
 #### Template: `templates/pyspark/snowflake_reader_spark.py`
 
 ```python
-def read_from_snowflake(spark, source_config):
+"""
+Snowflake Reader for PySpark (Spark Connector)
+
+Provides utility functions for connecting to Snowflake via the Spark
+Snowflake connector and executing arbitrary SQL queries. The SQL query
+comes from the pipeline config YAML at runtime.
+"""
+
+def setup_proxy(proxy_config, logger):
+    """Set proxy environment variables from the connection proxy config."""
+    # Sets http_proxy, https_proxy, HTTP_PROXY, HTTPS_PROXY
+
+def get_oauth_token(account, logger):
+    """Retrieve OAuth token from AWS Secrets Manager (adp/snowflake/{account}/oauth)."""
+
+def build_sf_options(connection, oauth_token):
+    """Build Snowflake Spark connector options dict."""
+
+def run_query(spark, sf_options, query_sql, connection, logger):
     """
-    Reads a table from Snowflake using OAuth and corporate proxy.
-
-    Args:
-        spark: SparkSession
-        source_config: dict with connection and table details
+    Execute an arbitrary SQL query against Snowflake and return a Spark DataFrame.
+    Validates SQL for safety (SELECT/WITH start check + DML/DDL blocklist).
     """
-    import os
-
-    conn = source_config["connection"]
-
-    # Set proxy environment variables (required by corporate policy)
-    os.environ["http_proxy"] = conn["proxy"]["http_proxy"]
-    os.environ["https_proxy"] = conn["proxy"]["https_proxy"]
-    os.environ["HTTP_PROXY"] = conn["proxy"]["http_proxy"]
-    os.environ["HTTPS_PROXY"] = conn["proxy"]["https_proxy"]
-
-    # Retrieve OAuth token from AWS Secrets Manager
-    import boto3
-    import json
-    secrets_client = boto3.client("secretsmanager")
-    secret_value = secrets_client.get_secret_value(
-        SecretId=f"adp/snowflake/{conn['account']}/oauth"
-    )
-    oauth_token = json.loads(secret_value["SecretString"])["access_token"]
-
-    sfOptions = {
-        "sfURL": f"{conn['account']}.snowflakecomputing.com",
-        "sfWarehouse": conn["warehouse"],
-        "sfRole": conn["role"],
-        "sfDatabase": source_config["database"],
-        "sfSchema": source_config["schema"],
-        "authenticator": "oauth",
-        "token": oauth_token,
-        "use_proxy": "true",
-        "proxy_host": conn["proxy"]["http_proxy"].split("://")[1].split(":")[0],
-        "proxy_port": conn["proxy"]["http_proxy"].split(":")[-1],
-    }
-
-    # Build query with column selection and filters
-    columns = source_config.get("columns", "*")
-    if isinstance(columns, list):
-        col_str = ", ".join(columns)
-    else:
-        col_str = "*"
-
-    table_fqn = f"{source_config['database']}.{source_config['schema']}.{source_config['table']}"
-    query = f"SELECT {col_str} FROM {table_fqn}"
-
-    filters = source_config.get("filters", [])
-    if filters:
-        where_clause = " AND ".join(filters)
-        query += f" WHERE {where_clause}"
-
-    sfOptions["query"] = query
-
-    logger.info(f"Reading from Snowflake: {table_fqn} with {len(filters)} filters")
-
-    df = (
-        spark.read
-        .format("net.snowflake.spark.snowflake")
-        .options(**sfOptions)
-        .load()
-    )
-
-    row_count = df.count()
-    logger.info(f"Read {row_count} rows from {table_fqn}")
-
-    return df
+    # Defense-in-depth: validates query starts with SELECT/WITH, no DML/DDL
+    # Executes via spark.read.format("net.snowflake.spark.snowflake")
 ```
 
 #### Template: `templates/pyspark/iceberg_writer_spark.py`
@@ -3337,8 +3145,9 @@ In the Data Mesh model, ownership is clearly delineated:
 
 Lineage is captured at two levels:
 
-1. **Static lineage** (from config): Source tables -> transformations -> target table.
-   Written to Glue Catalog table properties and Confluence.
+1. **Static lineage** (from config): Derived from `query.sql` — source table references (FQN patterns),
+   CTE definitions, and column mappings from the final SELECT clause. Written to Glue Catalog table
+   properties and Confluence. Generated by `governance/lineage/static_lineage.py`.
 
 2. **Runtime lineage** (from execution): Actual row counts, timestamps, correlation IDs.
    Written to CloudWatch Logs and an S3 lineage file per run.
@@ -3349,26 +3158,16 @@ Lineage is captured at two levels:
   "correlation_id": "def-456",
   "product_name": "monthly_revenue_by_category",
   "timestamp": "2026-04-03T06:15:00Z",
-  "sources": [
-    {
-      "name": "customer_orders",
-      "system": "snowflake",
-      "table": "PROD_DB.SALES.CUSTOMER_ORDERS",
-      "rows_read": 2450000,
-      "filters_applied": ["order_status = 'COMPLETED'", "order_date >= ..."]
-    },
-    {
-      "name": "product_catalog",
-      "system": "snowflake",
-      "table": "PROD_DB.PRODUCTS.PRODUCT_CATALOG",
-      "rows_read": 15000,
-      "filters_applied": []
-    }
+  "source": {
+    "type": "snowflake",
+    "account": "company-prod.us-east-1"
+  },
+  "query_sql_hash": "sha256:abc123...",
+  "tables_referenced": [
+    {"fqn": "PROD_DB.SALES.CUSTOMER_ORDERS", "rows_read": 2450000},
+    {"fqn": "PROD_DB.PRODUCTS.PRODUCT_CATALOG", "rows_read": 15000}
   ],
-  "transformations": [
-    {"type": "join", "left": "customer_orders", "right": "product_catalog", "result_rows": 2430000},
-    {"type": "aggregation", "group_by": ["category", "month"], "result_rows": 780}
-  ],
+  "ctes": ["completed_orders", "enriched_orders"],
   "target": {
     "table": "glue_catalog.sales_analytics_monthly_revenue_prod.monthly_revenue_by_category",
     "rows_written": 780,
@@ -3421,46 +3220,22 @@ MCP Call: getJiraIssue("SCRUM-4")
   "ticket_key": "SCRUM-4",
   "product_name": "monthly_revenue_by_category",
   "domain": "sales_analytics",
-  "sources": [
-    {
-      "name": "customer_orders",
-      "system": "snowflake",
-      "database": "PROD_DB",
-      "schema": "SALES",
-      "table": "CUSTOMER_ORDERS",
-      "columns": ["order_id", "customer_id", "product_id", "order_date", "quantity", "unit_price", "total_amount", "order_status"],
-      "filters": ["order_status = 'COMPLETED'"]
-    },
-    {
-      "name": "product_catalog",
-      "system": "snowflake",
-      "database": "PROD_DB",
-      "schema": "PRODUCTS",
-      "table": "PRODUCT_CATALOG",
-      "columns": ["product_id", "product_name", "category", "subcategory", "brand"],
-      "filters": []
+  "source": {
+    "type": "snowflake",
+    "connection": {
+      "account": "company-prod.us-east-1",
+      "warehouse": "ANALYTICS_WH",
+      "role": "ADP_READER_ROLE",
+      "authenticator": "oauth",
+      "proxy": {
+        "http_proxy": "http://corporate-proxy.company.com:8080",
+        "https_proxy": "http://corporate-proxy.company.com:8080"
+      }
     }
-  ],
-  "transformations": {
-    "joins": [
-      {
-        "left": "customer_orders",
-        "right": "product_catalog",
-        "keys": [{"left_key": "product_id", "right_key": "product_id"}],
-        "type": "inner"
-      }
-    ],
-    "aggregations": [
-      {
-        "group_by": ["product_catalog.category", "DATE_TRUNC('month', customer_orders.order_date)"],
-        "metrics": [
-          {"column": "customer_orders.total_amount", "function": "sum", "alias": "total_revenue"},
-          {"column": "customer_orders.order_id", "function": "count_distinct", "alias": "order_count"}
-        ]
-      }
-    ],
-    "filters": [],
-    "column_mappings": []
+  },
+  "query": {
+    "sql": "WITH completed_orders AS (\n  SELECT o.\"order_id\", o.\"product_id\", o.\"order_date\", o.\"quantity\", o.\"total_amount\"\n  FROM \"PROD_DB\".\"SALES\".\"CUSTOMER_ORDERS\" o\n  WHERE o.\"order_status\" = 'COMPLETED'\n    AND o.\"order_date\" >= DATEADD(month, -13, CURRENT_DATE())\n),\nenriched_orders AS (\n  SELECT co.*, p.\"category\"\n  FROM completed_orders co\n  INNER JOIN \"PROD_DB\".\"PRODUCTS\".\"PRODUCT_CATALOG\" p ON co.\"product_id\" = p.\"product_id\"\n)\nSELECT\n  eo.\"category\" AS product_category,\n  DATE_TRUNC('month', eo.\"order_date\") AS revenue_month,\n  SUM(eo.\"total_amount\") AS total_revenue,\n  COUNT(DISTINCT eo.\"order_id\") AS order_count,\n  AVG(eo.\"total_amount\") AS avg_order_value,\n  SUM(eo.\"quantity\") AS total_units_sold\nFROM enriched_orders eo\nGROUP BY eo.\"category\", DATE_TRUNC('month', eo.\"order_date\")\nHAVING SUM(eo.\"total_amount\") > 0",
+    "description": "Joins customer_orders and product_catalog, aggregates monthly revenue by category"
   },
   "target": {
     "domain": "sales_analytics",
@@ -3472,6 +3247,11 @@ MCP Call: getJiraIssue("SCRUM-4")
   "schedule": {
     "frequency": "daily",
     "cron": "0 6 * * *"
+  },
+  "reconciliation": {
+    "rules": [
+      {"name": "total_revenue_check", "type": "sum", "source_expr": "SELECT SUM(total_amount) FROM PROD_DB.SALES.CUSTOMER_ORDERS WHERE order_status = 'COMPLETED'", "target_expr": "SELECT SUM(total_revenue) FROM monthly_revenue_by_category", "tolerance_pct": 0.01}
+    ]
   },
   "data_quality": {
     "expectations": ["total_revenue >= 0", "product_category IS NOT NULL"],
@@ -3525,25 +3305,25 @@ This is the exact YAML shown in Section 4.2.
 all code artifacts.
 
 **Skills invoked:**
-1. `generate-pipeline` -- produces `pipelines/monthly_revenue_by_category/glue_jobs/monthly_revenue_by_category_etl.py`
-2. `generate-step-function` -- produces `pipelines/monthly_revenue_by_category/step_functions/monthly_revenue_by_category_orchestrator.asl.json`
-3. `run-recon` -- produces `pipelines/monthly_revenue_by_category/recon/monthly_revenue_by_category_recon.py`
+1. `generate-pipeline` -- deploys generic shared pipeline to `pipelines/generic/glue/` (if not already deployed)
+2. `generate-step-function` -- produces Step Function ASL that passes `config_s3_path` to generic Glue job via `--CONFIG_PATH`
+3. Config file `configs/monthly_revenue_by_category.yaml` is the product-specific artifact
 
 **Hooks fired:**
-- `post-codegen-lint.sh` -- runs flake8 + bandit on generated code
+- `post-codegen-lint.sh` -- runs flake8 + bandit on pipeline code
 
 **Artifacts produced:** `s3://adp-artifacts/run-20260403-001/04-code/`
 ```
 04-code/
-  glue_jobs/monthly_revenue_by_category_etl.py
+  pipelines/generic/glue/glue_job_boilerplate.py   # shared generic pipeline
+  pipelines/generic/glue/snowflake_reader_spark.py  # shared reader
+  pipelines/generic/glue/iceberg_writer_spark.py    # shared writer
+  pipelines/generic/glue/reconciliation.py          # shared recon
+  configs/monthly_revenue_by_category.yaml          # product-specific config
   step_functions/monthly_revenue_by_category_orchestrator.asl.json
-  lambdas/recon_checker.py
-  lambdas/notification_handler.py
-  recon/monthly_revenue_by_category_recon.py
 ```
 
-The generated PySpark job is the complete code shown in Section 5.2.
-The generated Step Function ASL is the complete JSON shown in Section 5.3.
+The generic Glue job reads the config at runtime via `--CONFIG_PATH` and executes `query.sql`.
 
 ### Stage 5: Build (Jenkins)
 

@@ -33,20 +33,23 @@ This document explains how a data product producer can use the AI SDLC framework
 
 The AI SDLC framework converts a business requirement (captured as a Jira ticket) into a fully deployed, governed data pipeline on AWS. The system is:
 
-- **Config-driven** -- a single YAML file defines your entire data product
-- **Template-backed** -- code is generated from battle-tested templates, not from scratch
+- **Config-driven** -- a single YAML file (with SQL) defines your entire data product
+- **Generic pipeline** -- one shared, reusable pipeline per engine; no per-product code generation
+- **SQL-driven** -- all transformation logic (CTEs, joins, aggregations) lives in the config SQL
 - **Guardrailed** -- hooks enforce security and compliance at every stage
 - **Multi-engine** -- supports Glue (PySpark), EMR (PySpark), Lambda (Python), and ECS (Python)
 
 **End-to-end flow:**
 
 ```
-Jira Ticket --> Parsed Requirements --> Technical Spec --> Pipeline Config (YAML)
-    --> Generated ETL Code + Step Function + Terraform --> CI/CD Build & Deploy
+Jira Ticket --> Parsed Requirements --> Technical Spec --> Pipeline Config (YAML with SQL)
+    --> Generic Pipeline Deployment + Step Function + Terraform --> CI/CD Build & Deploy
     --> Reconciliation & Data Quality Validation --> Production Monitoring
 ```
 
-Each stage is handled by a specialized Claude Code subagent. You can run the full pipeline end-to-end, or invoke individual stages as needed.
+**Key principle:** Multiple data products share the SAME pipeline code. Each product has its own config file containing the SQL query. The generic pipeline reads the config at runtime, executes the SQL against Snowflake, and writes the result to Iceberg.
+
+Each stage is handled by a specialized Claude Code subagent (all using `model: claude-opus-4-6`). You can run the full pipeline end-to-end, or invoke individual stages as needed.
 
 ---
 
@@ -127,12 +130,12 @@ AnalyticalDataProduct/
     skills/           # 9 slash-command skills (code generation, validation, etc.)
     agents/           # 6 subagent definitions (requirement-parser, spec-generator, etc.)
     settings.json     # Hook registrations and tool permissions
-  configs/            # Example pipeline config YAML
+  configs/            # Pipeline config YAMLs (one per data product, contains SQL)
   schemas/            # JSON Schema for config validation
   templates/
     common/           # Shared: reconciliation.py, data_quality.py
-    pyspark/          # Glue/EMR: boilerplate, Snowflake reader, Iceberg writer
-    python/           # Lambda/ECS: handler, entrypoint, Snowflake reader, Iceberg writer, Dockerfile
+    pyspark/          # Glue/EMR: generic pipeline, Snowflake reader, Iceberg writer
+    python/           # Lambda/ECS: generic pipeline, Snowflake reader, Iceberg writer, Dockerfile
   hooks/              # 5 guardrail hook scripts
   terraform/
     modules/          # 8 reusable Terraform modules
@@ -197,10 +200,14 @@ analytical-data-product-monthly_revenue/
   tests/                                # Test framework
   scripts/                              # Utility scripts
   pipelines/
-    monthly_revenue/                    # Generated code goes here
-      glue_jobs/                        # (or emr_jobs/, lambda_jobs/, ecs_jobs/)
-      step_functions/
-      recon/
+    generic/                            # Shared pipeline code (one per engine)
+      glue/                             # Generic Glue job + shared modules
+      emr/                              # Generic EMR job + shared modules
+      lambda/                           # Generic Lambda handler + shared modules
+      ecs/                              # Generic ECS entrypoint + Dockerfile
+    monthly_revenue/                    # Product-specific artifacts
+      step_functions/                   # Step Function ASL (passes config to generic pipeline)
+      tests/                            # Product-specific test stubs
   CLAUDE.md
   .mcp.json
   .gitignore
@@ -238,9 +245,10 @@ Generate a technical specification from the parsed requirements
 
 The spec-generator agent:
 1. Reads the requirements JSON
-2. Enriches with technical details (Snowflake FQN, column types, join strategies, partition specs)
-3. Publishes a formatted spec to Confluence
-4. Posts a link to the Confluence page on the Jira ticket
+2. Produces a production-ready SQL query (CTEs, fully-qualified table names, double-quoted identifiers)
+3. Defines source connection, target Iceberg table, and reconciliation rules
+4. Publishes a formatted spec to Confluence
+5. Posts a link to the Confluence page on the Jira ticket
 
 ### Stage 3: Configuration (Config Generator)
 
@@ -275,9 +283,9 @@ Or use the slash command directly:
 
 The pipeline-generator agent:
 1. Reads `compute.engine` from the config
-2. Generates engine-specific ETL code (Glue PySpark, EMR PySpark, Lambda Python, or ECS Python + Dockerfile)
-3. Generates a Step Function ASL JSON for orchestration
-4. Creates pytest test stubs
+2. Deploys the generic pipeline for the selected engine (if not already deployed) -- shared code, not per-product
+3. Generates a Step Function ASL JSON that passes the config path to the generic pipeline
+4. Creates pytest test stubs validating config integrity and SQL
 5. Runs flake8 + bandit with up to 3 auto-fix attempts
 
 ### Stage 5: Infrastructure (Infra Agent)
@@ -362,34 +370,34 @@ compute:
   engine: glue                     # glue | emr | lambda | ecs
   language: pyspark                # pyspark (glue/emr) | python (lambda/ecs)
 
-sources:
-  - name: my_source_table
-    type: snowflake
-    connection:
-      account: company-prod.us-east-1
-      warehouse: ANALYTICS_WH
-      role: ADP_READER_ROLE
-      authenticator: oauth         # MUST be oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: PROD_DB
-    schema: MY_SCHEMA
-    table: MY_TABLE
-    columns:                       # list specific columns or ["*"]
-      - id
-      - value
-      - created_date
-    filters: []                    # optional WHERE conditions
+# Snowflake connection only -- tables are referenced in the SQL query below
+source:
+  type: snowflake
+  connection:
+    account: company-prod.us-east-1
+    warehouse: ANALYTICS_WH
+    role: ADP_READER_ROLE
+    authenticator: oauth           # MUST be oauth
+    proxy:
+      http_proxy: "http://corporate-proxy.company.com:8080"
+      https_proxy: "http://corporate-proxy.company.com:8080"
 
-transformations:
-  joins: []                        # optional joins between sources
-  aggregations:                    # optional aggregation logic
-    group_by: []
-    metrics: []
-  filters: []                      # post-transform filters
-  column_mappings: []              # rename/derive columns
-  custom_sql: []                   # custom SQL expressions
+# ALL transformation logic lives here as SQL (CTEs, joins, aggregations)
+# No temp tables -- use CTEs instead. Fully-qualified table names required.
+query:
+  sql: |
+    WITH filtered_data AS (
+        SELECT "id", "value", "created_date"
+        FROM "PROD_DB"."MY_SCHEMA"."MY_TABLE"
+        WHERE "created_date" >= DATEADD(month, -12, CURRENT_DATE())
+    )
+    SELECT
+        DATE_TRUNC('month', "created_date") AS created_month,
+        SUM("value")                        AS total_value,
+        COUNT(*)                            AS record_count
+    FROM filtered_data
+    GROUP BY DATE_TRUNC('month', "created_date")
+  description: "Aggregates values by month from MY_TABLE"
 
 target:
   catalog: glue_catalog
@@ -399,7 +407,7 @@ target:
   format: iceberg
   write_mode: overwrite            # overwrite | append
   partition_by:
-    - created_date
+    - created_month
   sort_order: []
   table_properties:
     format-version: "2"
@@ -411,15 +419,18 @@ reconciliation:
   rules:
     - name: row_count_check
       type: row_count
-      source_expr: "SELECT COUNT(*) FROM PROD_DB.MY_SCHEMA.MY_TABLE"
+      source_expr: >
+        SELECT COUNT(DISTINCT DATE_TRUNC('month', "created_date"))
+        FROM "PROD_DB"."MY_SCHEMA"."MY_TABLE"
+        WHERE "created_date" >= DATEADD(month, -12, CURRENT_DATE())
       target_expr: "SELECT COUNT(*) FROM my_domain_my_product_name_prod.my_product_name"
       tolerance_pct: 0.0
 
 data_quality:
   checks:
-    - name: id_not_null
+    - name: value_not_null
       type: not_null
-      column: id
+      column: total_value
       parameters: {}
 
 runtime:
@@ -453,8 +464,8 @@ Before generating code, validate your config:
 |---------|---------|----------|
 | `product` | Name, domain, owner, version, schedule | Yes |
 | `compute` | Engine selection (glue/emr/lambda/ecs) | Yes |
-| `sources` | Snowflake source definitions (at least 1) | Yes |
-| `transformations` | Joins, aggregations, filters, column mappings | Yes |
+| `source` | Snowflake connection (account, warehouse, role, auth, proxy) | Yes |
+| `query` | SQL with all transformation logic (CTEs, joins, aggregations) | Yes |
 | `target` | Iceberg table on Glue Catalog with S3 path | Yes |
 | `reconciliation` | Source-to-target validation rules (at least 1 rule) | Yes |
 | `runtime` | Engine-specific settings (timeout, workers, memory) | Yes |

@@ -1,37 +1,96 @@
 """
-AWS ECS Fargate Python+Pandas ETL Entrypoint
-Template: ecs_entrypoint.py
+Generic AWS ECS Fargate Python+Pandas ETL Entrypoint
 
-Provides the standard ECS entrypoint skeleton with argparse CLI arguments,
-structured JSON logging, correlation ID per invocation, and graceful
-shutdown handling for Fargate containers.
+A config-driven ECS task that reads a YAML pipeline config at runtime,
+executes the SQL query from the config against Snowflake via
+snowflake-connector-python, and writes the result to an Apache Iceberg
+table via PyIceberg.
 
-Generated code sections are marked with {{ generated_code }} placeholders.
-The Pipeline Generator Agent fills these in during code generation.
+Multiple data products share this SAME code -- only the config differs.
 
 Usage:
     Runs as a Docker container on ECS Fargate. Entry point is main().
-    Arguments: --env <environment> [--job-name <name>]
+    Arguments:
+        --config-path   S3 URI or local path to the pipeline config YAML
+        --env           Environment name (dev/staging/prod)
 """
 import os
 import sys
 import logging
 import uuid
 import json
+import re
 import signal
 import argparse
-from datetime import datetime
+import tempfile
 
 import boto3
-import snowflake.connector
-import pandas as pd
-from pyiceberg.catalog import load_catalog
-import pyarrow as pa
+import yaml
+
+from snowflake_reader_pandas import setup_proxy, get_oauth_token, build_conn_params, run_query
+from iceberg_writer_pyiceberg import write_to_iceberg
+from reconciliation import run_reconciliation
 
 
-product_name = "{{ product_name }}"
+# ---------------------------------------------------------------------------
+# SQL safety validation
+# ---------------------------------------------------------------------------
+_DISALLOWED_SQL = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
+    re.IGNORECASE,
+)
 
-# Graceful shutdown flag for SIGTERM handling
+
+def _validate_sql(sql):
+    """Validate that the SQL is a SELECT-only statement (defense-in-depth)."""
+    stripped = sql.strip().rstrip(";").strip()
+    if not stripped.upper().startswith(("SELECT", "WITH")):
+        raise ValueError("Query SQL must start with SELECT or WITH (CTE).")
+    if _DISALLOWED_SQL.search(stripped):
+        raise ValueError(
+            "Query SQL contains disallowed DML/DDL keywords. "
+            "Only SELECT queries are permitted against Snowflake."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Config loader
+# ---------------------------------------------------------------------------
+def _load_config(config_path):
+    """Load a YAML config from an S3 URI or local file path."""
+    if config_path.startswith("s3://"):
+        s3 = boto3.client("s3")
+        bucket, key = config_path.replace("s3://", "").split("/", 1)
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
+            s3.download_file(bucket, key, tmp.name)
+            tmp_path = tmp.name
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        os.unlink(tmp_path)
+    else:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    return config
+
+
+# ---------------------------------------------------------------------------
+# Structured logging
+# ---------------------------------------------------------------------------
+class _JsonFormatter(logging.Formatter):
+    """JSON log formatter with correlation ID support."""
+
+    def format(self, record):
+        return json.dumps({
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "correlation_id": record.__dict__.get("correlation_id", ""),
+            "msg": record.getMessage(),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown
+# ---------------------------------------------------------------------------
 _shutdown_requested = False
 
 
@@ -44,100 +103,143 @@ def _sigterm_handler(signum, frame):
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
 def parse_args():
     """Parse command-line arguments for the ECS job."""
-    parser = argparse.ArgumentParser(
-        description=f"ECS ETL job for {product_name}"
+    parser = argparse.ArgumentParser(description="Generic ECS ETL job")
+    parser.add_argument(
+        "--config-path",
+        default=os.environ.get("CONFIG_PATH"),
+        help="S3 URI or local path to the pipeline config YAML",
     )
     parser.add_argument(
         "--env",
         default=os.environ.get("ENV", "prod"),
         help="Environment (dev/staging/prod)",
     )
-    parser.add_argument(
-        "--job-name",
-        default=f"adp-{{{{ product_domain }}}}-{product_name}-etl-prod",
-        help="Job name for logging",
-    )
     return parser.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 def main():
     """Main entry point for the ECS ETL job."""
     args = parse_args()
-    correlation_id = str(uuid.uuid4())
+    config_path = args.config_path
+    env = args.env
+    correlation_id = os.environ.get("CORRELATION_ID", str(uuid.uuid4()))
+    aws_region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION"))
 
-    # -------------------------------------------------------------------
-    # Structured logging setup
-    # -------------------------------------------------------------------
-    class _JsonFormatter(logging.Formatter):
-        def format(self, record):
-            return json.dumps({
-                "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
-                "level": record.levelname,
-                "correlation_id": record.__dict__.get("correlation_id", ""),
-                "msg": record.getMessage(),
-            })
-
-    base_logger = logging.getLogger(f"{product_name}_etl")
+    # Set up logger
+    base_logger = logging.getLogger("adp_ecs_etl")
     if not base_logger.handlers:
         base_logger.setLevel(logging.INFO)
         handler_log = logging.StreamHandler()
         handler_log.setFormatter(_JsonFormatter())
         base_logger.addHandler(handler_log)
-    logger = logging.LoggerAdapter(
-        base_logger, {"correlation_id": correlation_id}
-    )
+    logger = logging.LoggerAdapter(base_logger, {"correlation_id": correlation_id})
 
-    logger.info(f"Starting ECS job {args.job_name} in environment {args.env}")
+    logger.info(f"Starting ECS ETL job in environment {env}")
     logger.info(f"Correlation ID: {correlation_id}")
+    logger.info(f"Config path: {config_path}")
+
+    if not config_path:
+        logger.error("No config_path provided via --config-path or CONFIG_PATH env var")
+        sys.exit(1)
 
     try:
-        # ---------------------------------------------------------------
-        # Proxy configuration (if required)
-        # ---------------------------------------------------------------
-        # {{ proxy_setup }}
+        # ------------------------------------------------------------------
+        # Load pipeline config
+        # ------------------------------------------------------------------
+        config = _load_config(config_path)
+        product_name = config.get("product", {}).get("name", "unknown")
+        logger.info(f"Loaded config for product: {product_name}")
 
-        # ---------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Check for shutdown before heavy processing
+        # ------------------------------------------------------------------
+        if _shutdown_requested:
+            logger.warning("Shutdown requested before query execution, exiting")
+            sys.exit(0)
+
+        # ------------------------------------------------------------------
+        # Validate SQL
+        # ------------------------------------------------------------------
+        query_sql = config["query"]["sql"]
+        _validate_sql(query_sql)
+        logger.info("SQL validation passed")
+
+        # ------------------------------------------------------------------
+        # Proxy configuration
+        # ------------------------------------------------------------------
+        connection = config["source"]["connection"]
+        proxy_config = connection.get("proxy")
+        if proxy_config:
+            setup_proxy(proxy_config, logger)
+
+        # ------------------------------------------------------------------
         # OAuth token retrieval from AWS Secrets Manager
-        # ---------------------------------------------------------------
-        # {{ oauth_retrieval }}
+        # ------------------------------------------------------------------
+        account = connection["account"]
+        oauth_token = get_oauth_token(account, logger)
 
-        # ---------------------------------------------------------------
-        # Source reading (Snowflake via DBAPI + pandas)
-        # ---------------------------------------------------------------
-        # {{ source_reading }}
+        # ------------------------------------------------------------------
+        # Build Snowflake connection parameters
+        # ------------------------------------------------------------------
+        conn_params = build_conn_params(connection, oauth_token)
 
-        # ---------------------------------------------------------------
-        # Joins (pandas.merge)
-        # ---------------------------------------------------------------
-        # {{ joins }}
+        # ------------------------------------------------------------------
+        # Execute query against Snowflake
+        # ------------------------------------------------------------------
+        df = run_query(conn_params, query_sql, logger)
+        row_count = len(df)
+        logger.info(f"Query returned {row_count} rows")
 
-        # ---------------------------------------------------------------
-        # Column mappings and aggregations (pandas.groupby().agg())
-        # ---------------------------------------------------------------
-        # {{ column_mappings_and_aggregations }}
+        # ------------------------------------------------------------------
+        # Check for shutdown before writing
+        # ------------------------------------------------------------------
+        if _shutdown_requested:
+            logger.warning("Shutdown requested before Iceberg write, exiting")
+            sys.exit(0)
 
-        # ---------------------------------------------------------------
-        # Post-aggregation filters
-        # ---------------------------------------------------------------
-        # {{ filters }}
+        # ------------------------------------------------------------------
+        # Write to Iceberg target
+        # ------------------------------------------------------------------
+        target = config["target"]
+        write_to_iceberg(df, target, logger, aws_region=aws_region)
 
-        # ---------------------------------------------------------------
-        # Write to Iceberg target (PyIceberg)
-        # ---------------------------------------------------------------
-        # {{ iceberg_write }}
+        # ------------------------------------------------------------------
+        # Reconciliation checks
+        # ------------------------------------------------------------------
+        recon_config = config.get("reconciliation", {})
+        recon_rules = recon_config.get("rules", [])
+        if recon_rules:
+            def _sf_executor(sql_expr):
+                """Execute a scalar SQL expression against Snowflake."""
+                recon_df = run_query(conn_params, sql_expr, logger)
+                return recon_df.iloc[0, 0]
 
-        # ---------------------------------------------------------------
-        # Reconciliation (synchronous Lambda invocation)
-        # ---------------------------------------------------------------
-        # {{ reconciliation }}
+            recon_result = run_reconciliation(
+                rules=recon_rules,
+                logger=logger,
+                correlation_id=correlation_id,
+                source_executor=_sf_executor,
+                target_df=df,
+            )
+            logger.info(f"Reconciliation result: {json.dumps(recon_result)}")
+            if recon_result["overall_status"] == "FAIL":
+                logger.warning("Reconciliation FAILED -- check rule results for details")
+        else:
+            logger.info("No reconciliation rules configured, skipping")
 
-        logger.info("Job completed successfully.")
+        logger.info("ECS ETL job completed successfully.")
         sys.exit(0)
 
     except Exception:
-        logger.error("Job failed. See traceback below.", exc_info=True)
+        logger.error("ECS ETL job failed. See traceback below.", exc_info=True)
         sys.exit(1)
 
 

@@ -31,7 +31,7 @@
   - `.claude/skills/` with subdirectories for all 9 skills
   - `.claude/agents/` with subdirectories for all 6 agents
   - `configs/`, `schemas/`, `templates/` (engine-scoped: `common/`, `pyspark/`, `python/`)
-  - `hooks/`, `pipelines/{product_name}/` (with `glue_jobs/`, `emr_jobs/`, `lambda_jobs/`, `ecs_jobs/`, `step_functions/`, `lambdas/`, `recon/`)
+  - `hooks/`, `pipelines/generic/` (with `glue/`, `emr/`, `lambda/`, `ecs/` — shared across all data products)
   - `terraform/modules/` (glue_job, emr_cluster, ecs_task, ecr, step_function, lambda, iam, monitoring)
   - `terraform/environments/` (dev, staging, prod)
   - `tests/`, `scripts/`, `examples/`, `harness/`
@@ -57,14 +57,14 @@
 
 **Acceptance Criteria:**
 - [ ] File: `schemas/pipeline_config_schema.json`
-- [ ] Validates all required top-level keys: `product`, `compute`, `sources`, `transformations`, `target`, `reconciliation`, `runtime`
+- [ ] Validates all required top-level keys: `product`, `compute`, `source`, `query`, `target`, `reconciliation`, `runtime`
 - [ ] `product` schema: `name` (regex `^[a-z][a-z0-9_]{2,50}$`), `domain`, `owner` (email), `version` (semver), `description`, optional `tags`, optional `schedule` (frequency enum + cron)
 - [ ] `compute` schema: `engine` (enum: glue, emr, lambda, ecs), optional `language` (enum: pyspark, python)
-- [ ] `sources` schema: array of objects with `name`, `type` (enum: snowflake), `connection` (account, warehouse, role, authenticator=oauth, proxy with http/https), `database`, `schema`, `table`, `columns`, `filters`
-- [ ] `transformations` schema: `joins` (left, right, keys, type enum), `aggregations` (group_by, metrics with function enum), `filters`, `column_mappings`, `custom_sql`
+- [ ] `source` schema: singular object with `type` (enum: snowflake), `connection` (account, warehouse, role, authenticator=oauth, proxy with http/https) — NO database/schema/table/columns (those are in the SQL query)
+- [ ] `query` schema: `sql` (string, minLength 10, must start with SELECT or WITH), optional `description`, optional `parameters` — all transformation logic (CTEs, joins, aggregations) lives in the SQL
 - [ ] `target` schema: `catalog`, `database`, `table`, `s3_path` (pattern `^s3://`), `format` (const: iceberg), `write_mode` (enum: append, overwrite), optional `partition_by`, `sort_order`, `table_properties`
 - [ ] `reconciliation` schema: `enabled` (boolean), `rules` array (name, type enum, source_expr, target_expr, tolerance_pct 0-100)
-- [ ] `data_quality` schema: `checks` array (name, type enum: not_null/unique/range/regex/custom, column, parameters)
+- [ ] `data_quality` schema (optional section): `checks` array (name, type enum: not_null/unique/range/regex/custom, column, parameters)
 - [ ] `runtime` schema: common fields (timeout_minutes, max_concurrent_runs, tags) + engine-specific fields:
   - Glue: glue_version, worker_type (enum), num_workers, extra_py_files, extra_jars, job_parameters
   - EMR: emr_release (pattern), emr_mode (enum: serverless/ec2), emr_application_id, instance_type, instance_count, spark_submit_parameters
@@ -84,9 +84,9 @@
 **Acceptance Criteria:**
 - [ ] File: `configs/monthly_revenue_by_category.yaml`
 - [ ] Contains complete config as defined in `AI_SDLC_Plan.md` Section 4.2
-- [ ] Two Snowflake sources: `customer_orders` (PROD_DB.SALES) and `product_catalog` (PROD_DB.PRODUCTS)
-- [ ] Both sources use OAuth authentication and corporate proxy
-- [ ] Inner join on `product_id`, monthly aggregation with 4 metrics (sum revenue, count distinct orders, avg order value, sum quantity)
+- [ ] Single `source` connection config: Snowflake OAuth with corporate proxy
+- [ ] `query.sql` contains full SQL with CTEs referencing `PROD_DB.SALES.CUSTOMER_ORDERS` and `PROD_DB.PRODUCTS.PRODUCT_CATALOG` using fully-qualified table names
+- [ ] SQL uses CTEs for filtering, inner join on `product_id`, monthly aggregation with 4 metrics (sum revenue, count distinct orders, avg order value, sum quantity)
 - [ ] Target: Iceberg table via Glue Catalog, overwrite mode, partitioned by `revenue_month`
 - [ ] 3 reconciliation rules (total_revenue_check, row_count_reasonableness, no_null_categories)
 - [ ] 4 data quality checks (revenue_positive, category_not_null, month_not_null, order_count_positive)
@@ -147,13 +147,13 @@
   - `description`: Validates a pipeline configuration YAML against the standard schema
   - `argument-hint: "[config-path]"`
   - `allowed-tools: Read Grep Bash`
-- [ ] Skill validates all 8 required top-level keys
-- [ ] Skill validates each source has required connection fields (account, warehouse, role, authenticator=oauth)
-- [ ] Skill validates join types are in enum (inner, left, right, full)
+- [ ] Skill validates all 7 required top-level keys: `product`, `compute`, `source`, `query`, `target`, `reconciliation`, `runtime`
+- [ ] Skill validates `source.connection` has required fields (account, warehouse, role, authenticator=oauth)
+- [ ] Skill validates `query.sql` starts with SELECT or WITH and contains no DML/DDL keywords
 - [ ] Skill validates target has s3_path starting with `s3://`
 - [ ] Skill validates reconciliation has at least one rule with tolerance_pct between 0-100
 - [ ] Skill validates runtime has timeout_minutes > 0
-- [ ] Skill explicitly checks no Snowflake write operations exist in transformations
+- [ ] Skill explicitly checks no Snowflake write operations exist in query SQL
 - [ ] Returns structured output: PASS or FAIL with list of specific errors
 
 **Technical Context:**
@@ -172,8 +172,8 @@
   - `description`: Validates Snowflake connection configuration before pipeline generation
   - `argument-hint: "[config-path]"`
   - `allowed-tools: Read Grep Bash`
-- [ ] Checks each source has `authenticator: oauth` (no password or keypair)
-- [ ] Checks `http_proxy` and `https_proxy` are both set and non-empty
+- [ ] Checks `source.connection` has `authenticator: oauth` (no password or keypair)
+- [ ] Checks `source.connection.proxy` has `http_proxy` and `https_proxy` both set and non-empty
 - [ ] Checks proxy URL matches corporate pattern (`http://corporate-proxy.company.com:*`)
 - [ ] Checks account URL format is valid (`{account}.{region}` pattern)
 - [ ] Checks role name follows convention (ends with `_READER_ROLE` or `_READ_ROLE`)
@@ -201,13 +201,13 @@
 - [ ] Step 2: Invoke `/validate-config` first
 - [ ] Step 3: Invoke `/validate-connection`
 - [ ] Step 4: Read `compute.engine` from config
-- [ ] Step 5: Delegate based on engine:
-  - `glue` → Generate PySpark Glue job inline (GlueContext, job.init/commit, templates from `templates/pyspark/glue_job_boilerplate.py`, `snowflake_reader_spark.py`, `iceberg_writer_spark.py`), output to `pipelines/{product_name}/glue_jobs/`
-  - `emr` → Invoke `/generate-emr-pipeline`
-  - `lambda` → Invoke `/generate-lambda-pipeline`
-  - `ecs` → Invoke `/generate-ecs-pipeline`
+- [ ] Step 5: Delegate based on engine — deploy generic shared pipeline to `pipelines/generic/{engine}/`:
+  - `glue` → Copy generic templates (`glue_job_boilerplate.py`, `snowflake_reader_spark.py`, `iceberg_writer_spark.py`, `reconciliation.py`) to `pipelines/generic/glue/`
+  - `emr` → Invoke `/generate-emr-pipeline` (deploys to `pipelines/generic/emr/`)
+  - `lambda` → Invoke `/generate-lambda-pipeline` (deploys to `pipelines/generic/lambda/`)
+  - `ecs` → Invoke `/generate-ecs-pipeline` (deploys to `pipelines/generic/ecs/`)
 - [ ] Step 6: Invoke `/generate-step-function`
-- [ ] Step 7: Add structured logging, error handling, reconciliation calls
+- [ ] Step 7: Pipeline code is generic and shared — NO transformation logic, reads config at runtime via `--CONFIG_PATH`
 
 **Technical Context:**
 - Skill definition: `AI_SDLC_Plan.md` Section 2.2, "Skill: generate-pipeline" (lines ~234-276)
@@ -231,7 +231,7 @@
 - [ ] Iceberg catalog configured via Spark conf (same catalog settings as Glue)
 - [ ] Snowflake read uses same Spark connector, OAuth + proxy pattern
 - [ ] Templates: `templates/pyspark/emr_job_boilerplate.py`, `snowflake_reader_spark.py` (shared), `iceberg_writer_spark.py` (shared), `common/reconciliation.py`
-- [ ] Output: `pipelines/{product_name}/emr_jobs/{job_name}.py`
+- [ ] Output: Generic shared pipeline at `pipelines/generic/emr/` (not per-product)
 - [ ] Generated code includes structured logging with correlation IDs
 
 **Technical Context:**
@@ -255,10 +255,10 @@
 - [ ] Iceberg writes via `pyiceberg` library (not Spark writeTo)
 - [ ] Lambda handler signature: `handler(event, context)`
 - [ ] Validates dataset size is appropriate for Lambda (< 500 MB recommended) based on config metadata
-- [ ] Joins via `pandas.merge()`, aggregations via `pandas.groupby().agg()`
+- [ ] No transformation logic in pipeline code — SQL from config handles all transforms
 - [ ] Generates `requirements.txt` for Lambda layer packaging (snowflake-connector-python, pandas, pyiceberg)
 - [ ] Templates: `python/lambda_handler.py`, `python/snowflake_reader_pandas.py`, `python/iceberg_writer_pyiceberg.py`, `common/reconciliation.py`
-- [ ] Output: `pipelines/{product_name}/lambda_jobs/{job_name}.py` + `requirements.txt`
+- [ ] Output: Generic shared pipeline at `pipelines/generic/lambda/` (not per-product)
 - [ ] Structured logging via Python `logging` module
 
 **Technical Context:**
@@ -288,7 +288,7 @@
 - [ ] Generates `requirements.txt`
 - [ ] No timeout limit (unlike Lambda)
 - [ ] Templates: `python/ecs_entrypoint.py`, `python/Dockerfile`, `python/snowflake_reader_pandas.py` (shared), `python/iceberg_writer_pyiceberg.py` (shared), `common/reconciliation.py`
-- [ ] Output: `pipelines/{product_name}/ecs_jobs/{job_name}.py`, `Dockerfile`, `requirements.txt`
+- [ ] Output: Generic shared pipeline at `pipelines/generic/ecs/` (not per-product)
 
 **Technical Context:**
 - Skill definition: `AI_SDLC_Plan.md` Section 2.2, "Skill: generate-ecs-pipeline" (lines ~532-582)
@@ -313,7 +313,7 @@
   - `CheckReconciliation` -> Choice: PASS -> `NotifySuccess` (SNS), FAIL -> `NotifyFailure` -> `MarkFailed`
 - [ ] Retry config: 2x retries with exponential backoff on each task state
 - [ ] Error catchers route to global error handler on each state
-- [ ] Output: `pipelines/{product_name}/step_functions/{product_name}_orchestrator.asl.json`
+- [ ] Output: Step Function definition that passes `config_s3_path` to the generic pipeline (Glue: `--CONFIG_PATH`, EMR: `--config-path`, Lambda: `config_path` in Payload, ECS: `--config-path` in Command)
 
 **Technical Context:**
 - Skill definition: `AI_SDLC_Plan.md` Section 2.2, "Skill: generate-step-function" (lines ~350-380)
@@ -365,7 +365,7 @@
 - [ ] For each rule, generates: source query (Snowflake read-only), target query (Iceberg via Glue Catalog), comparison expression with tolerance
 - [ ] Supports rule types: `row_count`, `sum`, `distinct_count`, `null_check`
 - [ ] Generates a function that runs all checks and returns structured report with `overall_status` (PASS/FAIL), `run_timestamp`, `correlation_id`, per-rule results
-- [ ] Output: `pipelines/{product_name}/recon/{product_name}_recon.py`
+- [ ] Output: Shared reconciliation module at `pipelines/generic/common/reconciliation.py` (or engine-specific location)
 
 **Technical Context:**
 - Skill definition: `AI_SDLC_Plan.md` Section 2.2, "Skill: run-recon" (lines ~382-410)
@@ -380,25 +380,24 @@
 **Summary:** Implement the PySpark code templates shared by Glue and EMR engines.
 
 **Acceptance Criteria:**
-- [ ] `templates/pyspark/glue_job_boilerplate.py` — Glue-specific skeleton with:
-  - `getResolvedOptions` for arg parsing
+- [ ] `templates/pyspark/glue_job_boilerplate.py` — Generic, runnable Glue job (NO placeholders):
+  - Accepts `--CONFIG_PATH`, `--ENV`, `--correlation_id` via `getResolvedOptions`
   - `GlueContext`, `SparkContext`, `Job` init/commit lifecycle
-  - Correlation ID + structured logging setup
-  - `{{ generated_code }}` placeholder
-  - Try/except with logging
-- [ ] `templates/pyspark/emr_job_boilerplate.py` — EMR-specific skeleton with:
-  - `argparse` for arg parsing
-  - Plain `SparkSession.builder` init (no GlueContext)
-  - Iceberg catalog configured via Spark conf
-  - `if __name__ == "__main__"` entry point
-  - Correlation ID + structured logging
+  - Loads YAML config at runtime, validates SQL (defense-in-depth DML/DDL check)
+  - Executes `config['query']['sql']` via Snowflake Spark connector, writes to Iceberg
+  - Runs reconciliation, structured JSON logging with correlation ID
+- [ ] `templates/pyspark/emr_job_boilerplate.py` — Generic, runnable EMR job (NO placeholders):
+  - Accepts `--config-path`, `--env`, `--correlation-id` via `argparse` + `parse_known_args()`
+  - Plain `SparkSession.builder` init (no GlueContext), Iceberg catalog via Spark conf
+  - `if __name__ == "__main__"` entry point, `spark.stop()` in `finally`
+  - Same config-driven runtime flow as Glue
 - [ ] `templates/pyspark/snowflake_reader_spark.py` — Shared Snowflake reader:
-  - `read_from_snowflake(spark, source_config)` function
+  - `run_query(spark, sf_options, query_sql, connection, logger)` function — executes arbitrary SQL
+  - `setup_proxy()`, `get_oauth_token()`, `build_sf_options()` utilities
   - Sets proxy env vars (http_proxy, https_proxy, HTTP_PROXY, HTTPS_PROXY)
   - Fetches OAuth token from Secrets Manager (`adp/snowflake/{account}/oauth`)
   - Uses `net.snowflake.spark.snowflake` format with sfOptions
-  - Builds query with column selection and filters
-  - Logs row counts
+  - SELECT/WITH start check + DML/DDL blocklist validation (defense-in-depth)
 - [ ] `templates/pyspark/iceberg_writer_spark.py` — Shared Iceberg writer:
   - `write_to_iceberg(df, target_config, logger)` function
   - Uses `df.writeTo(table_identifier)`
@@ -417,17 +416,16 @@
 **Summary:** Implement the Python+Pandas code templates shared by Lambda and ECS engines.
 
 **Acceptance Criteria:**
-- [ ] `templates/python/lambda_handler.py` — Lambda function skeleton:
+- [ ] `templates/python/lambda_handler.py` — Generic, runnable Lambda handler (NO placeholders):
   - `handler(event, context)` function signature
-  - Structured logging with correlation ID
-  - Error handling with CloudWatch-friendly output
-  - `{{ generated_code }}` placeholder
-- [ ] `templates/python/ecs_entrypoint.py` — ECS container entry point:
+  - Accepts `config_path` from event or `CONFIG_PATH` env var
+  - Loads YAML config at runtime, executes `query.sql` via `snowflake-connector-python`
+  - Writes to Iceberg via PyIceberg, structured JSON logging with correlation ID
+- [ ] `templates/python/ecs_entrypoint.py` — Generic, runnable ECS entry point (NO placeholders):
   - `main()` function with `if __name__ == "__main__"` entry
-  - `argparse` for CLI arguments (env, product_name)
-  - Structured logging with correlation ID
-  - Health check endpoint support (optional)
-  - `{{ generated_code }}` placeholder
+  - Accepts `--config-path` via `argparse`, SIGTERM handler, `sys.exit(0/1)`
+  - Same config-driven runtime flow as Lambda
+  - Structured JSON logging with correlation ID
 - [ ] `templates/python/Dockerfile` — ECS Dockerfile:
   - `FROM` corporate base image placeholder (ECR URI)
   - `COPY requirements.txt` + `pip install`
@@ -436,7 +434,7 @@
   - `CMD ["python", "main.py"]`
   - Must pass `hadolint` linting
 - [ ] `templates/python/snowflake_reader_pandas.py` — Pandas-based Snowflake reader:
-  - `read_from_snowflake(source_config)` function
+  - `run_query(conn_params, query_sql, logger)` function — executes arbitrary SQL
   - Uses `snowflake-connector-python` with `cursor.fetch_pandas_all()`
   - OAuth token from Secrets Manager
   - Proxy env vars set
@@ -487,11 +485,13 @@
 - [ ] File: `.claude/agents/requirement-parser/AGENT.md` with YAML frontmatter:
   - `name: requirement-parser`
   - `description`: Reads a Jira ticket via JIRA MCP and extracts a structured requirement object
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash mcp__atlassian__getJiraIssue mcp__atlassian__addCommentToJiraIssue`
 - [ ] Fetches ticket via `getJiraIssue`: title, description, acceptance criteria, labels, components
-- [ ] Parses description to identify: source datasets, transformations (joins, filters, aggregations, column mappings), target table, data quality expectations, schedule
+- [ ] Parses description to identify: source datasets, SQL transformation logic (CTEs, joins, aggregations), target table, data quality expectations, schedule
+- [ ] Generates `suggested_sql` with the transformation query using CTEs and fully-qualified Snowflake table names
 - [ ] Ambiguous fields go into `assumptions` list
-- [ ] Output schema includes: `ticket_key`, `product_name`, `domain`, `sources[]`, `transformations{}` (joins, aggregations, filters, column_mappings), `target{}`, `schedule{}`, `data_quality{}`, `assumptions[]`
+- [ ] Output schema includes: `ticket_key`, `product_name`, `domain`, `source{}` (connection config), `query{}` (with `suggested_sql`), `target{}`, `schedule{}`, `reconciliation{}`, `data_quality{}`, `assumptions[]`
 - [ ] Output written to: `s3://adp-artifacts/{run_id}/01-requirements.json`
 - [ ] Retry: 3x with exponential backoff (2s, 4s, 8s) on MCP timeout
 - [ ] If ticket doesn't exist → error. If description empty → error requesting manual input
@@ -510,6 +510,7 @@
 - [ ] File: `.claude/agents/spec-generator/AGENT.md` with YAML frontmatter:
   - `name: spec-generator`
   - `description`: Takes parsed requirement JSON and produces a detailed technical specification, publishing it to Confluence via MCP
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash mcp__atlassian__createConfluencePage mcp__atlassian__updateConfluencePage mcp__atlassian__addCommentToJiraIssue`
 - [ ] Input: `01-requirements.json`
 - [ ] Enriches requirements with: Snowflake FQN table names, join strategy (broadcast vs shuffle), Iceberg table schema, reconciliation rules, compute engine configuration
@@ -534,6 +535,7 @@
 - [ ] File: `.claude/agents/config-generator/AGENT.md` with YAML frontmatter:
   - `name: config-generator`
   - `description`: Takes technical spec JSON and produces a validated pipeline config YAML
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash Glob Grep`
 - [ ] Skills used: `validate-config`, `validate-connection`
 - [ ] Input: `02-spec.json`
@@ -556,7 +558,8 @@
 **Acceptance Criteria:**
 - [ ] File: `.claude/agents/pipeline-generator/AGENT.md` with YAML frontmatter:
   - `name: pipeline-generator`
-  - `description`: Takes pipeline config YAML and generates all ETL code, Step Functions, and supporting Lambdas
+  - `description`: Takes pipeline config YAML and deploys generic pipeline code, Step Functions, and supporting Lambdas
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash Glob Grep`
 - [ ] Skills used: `generate-pipeline`, `generate-emr-pipeline`, `generate-lambda-pipeline`, `generate-ecs-pipeline`, `generate-step-function`
 - [ ] Input: `03-config.yaml`
@@ -582,6 +585,7 @@
 - [ ] File: `.claude/agents/infra-agent/AGENT.md` with YAML frontmatter:
   - `name: infra-agent`
   - `description`: Generates Terraform modules and manages infrastructure deployment
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash Glob Grep`
 - [ ] Skills used: `generate-terraform`
 - [ ] Input: `03-config.yaml` + `04-code/`
@@ -606,6 +610,7 @@
 - [ ] File: `.claude/agents/qa-agent/AGENT.md` with YAML frontmatter:
   - `name: qa-agent`
   - `description`: Runs reconciliation checks and data quality validation after pipeline execution
+  - `model: claude-opus-4-6`
   - `tools`: `Read Write Bash Glob Grep mcp__atlassian__addCommentToJiraIssue mcp__atlassian__transitionJiraIssue`
 - [ ] Skills used: `run-recon`, `validate-config`
 - [ ] Input: `03-config.yaml` + pipeline execution results

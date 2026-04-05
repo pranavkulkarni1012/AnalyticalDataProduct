@@ -109,7 +109,7 @@ quality:
 
 lineage:
   sources:
-    # Populated from sources[] in the pipeline config
+    # Populated from source connection config and table references in query.sql
     - name: "{{ source_name }}"
       system: snowflake
       database: "{{ source_database }}"

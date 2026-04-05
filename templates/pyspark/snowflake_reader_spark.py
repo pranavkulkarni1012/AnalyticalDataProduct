@@ -2,10 +2,12 @@
 Snowflake Reader for PySpark (Spark Connector)
 Template: snowflake_reader_spark.py
 
-Provides the read_from_snowflake() function for PySpark-based engines
-(Glue and EMR). Retrieves an OAuth token from AWS Secrets Manager, sets
-proxy environment variables for corporate networks, and reads data via
-the Spark Snowflake connector (net.snowflake.spark.snowflake).
+Provides utility functions for connecting to Snowflake via the Spark
+Snowflake connector and executing arbitrary SQL queries. Used by the
+generic Glue and EMR pipeline templates.
+
+The SQL query comes from the pipeline config YAML at runtime -- this
+module does NOT build queries from source metadata.
 
 Used by both glue_job_boilerplate.py and emr_job_boilerplate.py.
 """
@@ -16,6 +18,15 @@ import re
 from urllib.parse import urlparse
 
 import boto3
+
+
+# ---------------------------------------------------------------------------
+# SQL safety validation
+# ---------------------------------------------------------------------------
+_DISALLOWED_SQL = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b",
+    re.IGNORECASE,
+)
 
 
 def setup_proxy(proxy_config, logger):
@@ -107,91 +118,55 @@ def build_sf_options(connection, oauth_token):
     return options
 
 
-def _quote_identifier(name):
-    """Quote a SQL identifier with double-quotes to prevent injection."""
-    return '"' + name.replace('"', '""') + '"'
-
-
-def build_source_query(source):
+def run_query(spark, sf_options, query_sql, connection, logger):
     """
-    Build a SQL SELECT query from the source configuration.
+    Execute an arbitrary SQL query against Snowflake and return a Spark DataFrame.
 
-    Uses double-quoted identifiers to prevent SQL injection.
-
-    Args:
-        source: Source config dict with database, schema, table, columns,
-                and filters.
-
-    Returns:
-        SQL query string.
-    """
-    fqn = (
-        f"{_quote_identifier(source['database'])}."
-        f"{_quote_identifier(source['schema'])}."
-        f"{_quote_identifier(source['table'])}"
-    )
-
-    columns = source.get("columns", "*")
-    if isinstance(columns, list) and columns:
-        col_list = ", ".join(_quote_identifier(c) for c in columns)
-    else:
-        col_list = "*"
-
-    query = f"SELECT {col_list} FROM {fqn}"
-
-    # Filters come from the validated pipeline config YAML (not user input).
-    # They are pre-validated by /validate-config against the JSON Schema.
-    # We apply basic sanity checks here as defense-in-depth.
-    _DISALLOWED_SQL = re.compile(
-        r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE)\b",
-        re.IGNORECASE,
-    )
-    filters = source.get("filters", [])
-    safe_filters = []
-    for f in filters:
-        if _DISALLOWED_SQL.search(f):
-            raise ValueError(f"Filter contains disallowed SQL keyword: {f}")
-        safe_filters.append(f)
-    if safe_filters:
-        where_clause = " AND ".join(safe_filters)
-        query += f" WHERE {where_clause}"
-
-    return query
-
-
-def read_from_snowflake(spark, sf_options, source, logger):
-    """
-    Read a Snowflake source into a Spark DataFrame.
+    Validates the SQL for safety (SELECT-only) before execution as
+    defense-in-depth.
 
     Args:
         spark: Active SparkSession.
-        sf_options: Base Snowflake connection options dict from
-                    build_sf_options().
-        source: Source config dict with database, schema, table, columns,
-                and filters.
+        sf_options: Snowflake connection options dict from build_sf_options().
+        query_sql: SQL query string to execute (must be SELECT or WITH).
+        connection: Source connection config dict (used for database/schema
+                    context if needed by the connector).
         logger: Logger instance with correlation ID.
 
     Returns:
-        Spark DataFrame containing the source data.
-    """
-    query = build_source_query(source)
-    source_name = source["name"]
-    logger.info(f"Reading source '{source_name}' from Snowflake")
+        Spark DataFrame containing the query results.
 
-    per_source_options = {
+    Raises:
+        ValueError: If the SQL contains disallowed DML/DDL keywords.
+    """
+    stripped = query_sql.strip().rstrip(";").strip()
+    if not stripped.upper().startswith(("SELECT", "WITH")):
+        raise ValueError("Query SQL must start with SELECT or WITH (CTE).")
+    if _DISALLOWED_SQL.search(stripped):
+        raise ValueError(
+            "Query SQL contains disallowed DML/DDL keywords. "
+            "Only SELECT queries are permitted against Snowflake."
+        )
+
+    logger.info("Executing SQL query against Snowflake via Spark connector")
+
+    query_options = {
         **sf_options,
-        "sfDatabase": source["database"],
-        "sfSchema": source["schema"],
-        "query": query,
+        "query": stripped,
     }
+
+    # Include database/schema context if available in the connection config
+    if connection.get("database"):
+        query_options["sfDatabase"] = connection["database"]
+    if connection.get("schema"):
+        query_options["sfSchema"] = connection["schema"]
 
     df = (
         spark.read.format("net.snowflake.spark.snowflake")
-        .options(**per_source_options)
+        .options(**query_options)
         .load()
     )
 
-    row_count = df.count()
-    logger.info(f"Source '{source_name}': {row_count} rows read")
+    logger.info("Snowflake query executed successfully via Spark connector")
 
     return df

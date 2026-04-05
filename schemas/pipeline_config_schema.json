@@ -2,9 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://adp.company.com/schemas/pipeline_config_schema.json",
   "title": "Analytical Data Product Pipeline Configuration",
-  "description": "JSON Schema for validating pipeline configuration YAMLs. This schema is the contract between the Config Generator agent and all downstream agents.",
+  "description": "JSON Schema for validating pipeline configuration YAMLs. Each config defines a single data product: a SQL query against Snowflake, a target Iceberg table, and runtime settings. The SQL in the query section contains all transformation logic (CTEs, joins, aggregations). Pipeline code is generic and shared across data products -- only the config differs.",
   "type": "object",
-  "required": ["product", "compute", "sources", "transformations", "target", "reconciliation", "runtime"],
+  "required": ["product", "compute", "source", "query", "target", "reconciliation", "runtime"],
   "additionalProperties": false,
   "properties": {
     "product": {
@@ -96,239 +96,80 @@
       }
     },
 
-    "sources": {
-      "type": "array",
-      "description": "Data source definitions (Snowflake only)",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["name", "type", "connection", "database", "schema", "table"],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Logical name for this source (used in joins and references)"
-          },
-          "type": {
-            "type": "string",
-            "enum": ["snowflake"],
-            "description": "Source system type (only Snowflake is supported)"
-          },
-          "connection": {
-            "type": "object",
-            "description": "Snowflake connection parameters",
-            "required": ["account", "warehouse", "role", "authenticator"],
-            "additionalProperties": false,
-            "properties": {
-              "account": {
-                "type": "string",
-                "description": "Snowflake account identifier (e.g., company-prod.us-east-1)"
-              },
-              "warehouse": {
-                "type": "string",
-                "description": "Snowflake warehouse name"
-              },
-              "role": {
-                "type": "string",
-                "description": "Snowflake role for access control"
-              },
-              "authenticator": {
-                "type": "string",
-                "enum": ["oauth"],
-                "description": "Authentication method (only OAuth is supported)"
-              },
-              "proxy": {
-                "type": "object",
-                "description": "Corporate proxy configuration",
-                "required": ["http_proxy", "https_proxy"],
-                "additionalProperties": false,
-                "properties": {
-                  "http_proxy": {
-                    "type": "string",
-                    "description": "HTTP proxy URL"
-                  },
-                  "https_proxy": {
-                    "type": "string",
-                    "description": "HTTPS proxy URL"
-                  }
+    "source": {
+      "type": "object",
+      "description": "Snowflake connection configuration. The SQL query in the 'query' section references tables using fully-qualified names (DATABASE.SCHEMA.TABLE), so only connection-level settings are needed here.",
+      "required": ["type", "connection"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["snowflake"],
+          "description": "Source system type (only Snowflake is supported)"
+        },
+        "connection": {
+          "type": "object",
+          "description": "Snowflake connection parameters",
+          "required": ["account", "warehouse", "role", "authenticator"],
+          "additionalProperties": false,
+          "properties": {
+            "account": {
+              "type": "string",
+              "description": "Snowflake account identifier (e.g., company-prod.us-east-1)"
+            },
+            "warehouse": {
+              "type": "string",
+              "description": "Snowflake warehouse name"
+            },
+            "role": {
+              "type": "string",
+              "description": "Snowflake role for access control"
+            },
+            "authenticator": {
+              "type": "string",
+              "enum": ["oauth"],
+              "description": "Authentication method (only OAuth is supported)"
+            },
+            "proxy": {
+              "type": "object",
+              "description": "Corporate proxy configuration",
+              "required": ["http_proxy", "https_proxy"],
+              "additionalProperties": false,
+              "properties": {
+                "http_proxy": {
+                  "type": "string",
+                  "description": "HTTP proxy URL"
+                },
+                "https_proxy": {
+                  "type": "string",
+                  "description": "HTTPS proxy URL"
                 }
               }
             }
-          },
-          "database": {
-            "type": "string",
-            "description": "Snowflake database name"
-          },
-          "schema": {
-            "type": "string",
-            "description": "Snowflake schema name"
-          },
-          "table": {
-            "type": "string",
-            "description": "Snowflake table name"
-          },
-          "columns": {
-            "oneOf": [
-              {
-                "type": "string",
-                "const": "*",
-                "description": "Select all columns"
-              },
-              {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Specific column names to select"
-              }
-            ],
-            "description": "Columns to read from the source table"
-          },
-          "filters": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "SQL WHERE clause conditions applied at source"
           }
         }
       }
     },
 
-    "transformations": {
+    "query": {
       "type": "object",
-      "description": "Data transformation definitions",
+      "description": "SQL query that defines the data product transformation. The SQL runs against Snowflake and should use CTEs, joins, and aggregations to produce the final result set. No temp tables -- use CTEs instead. The pipeline code executes this SQL, fetches the result, and writes it to the Iceberg target.",
+      "required": ["sql"],
       "additionalProperties": false,
       "properties": {
-        "joins": {
-          "type": "array",
-          "description": "Join definitions between source tables",
-          "items": {
-            "type": "object",
-            "required": ["left", "right", "keys", "type"],
-            "additionalProperties": false,
-            "properties": {
-              "left": {
-                "type": "string",
-                "description": "Left table name (matches a source name)"
-              },
-              "right": {
-                "type": "string",
-                "description": "Right table name (matches a source name)"
-              },
-              "keys": {
-                "type": "array",
-                "description": "Join key pairs",
-                "items": {
-                  "type": "object",
-                  "required": ["left_key", "right_key"],
-                  "additionalProperties": false,
-                  "properties": {
-                    "left_key": {
-                      "type": "string",
-                      "description": "Column name from the left table"
-                    },
-                    "right_key": {
-                      "type": "string",
-                      "description": "Column name from the right table"
-                    }
-                  }
-                }
-              },
-              "type": {
-                "type": "string",
-                "enum": ["inner", "left", "right", "full"],
-                "description": "Join type"
-              }
-            }
-          }
+        "sql": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The Snowflake SQL query containing all transformation logic. Use fully-qualified table names (DATABASE.SCHEMA.TABLE). Use CTEs for intermediate steps, joins for combining tables, and aggregations for metrics. No temp tables, no DML -- SELECT only."
         },
-        "aggregations": {
-          "type": "array",
-          "description": "Aggregation definitions",
-          "items": {
-            "type": "object",
-            "required": ["group_by", "metrics"],
-            "additionalProperties": false,
-            "properties": {
-              "group_by": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Columns to group by (can include expressions)"
-              },
-              "metrics": {
-                "type": "array",
-                "description": "Aggregate metric definitions",
-                "items": {
-                  "type": "object",
-                  "required": ["column", "function", "alias"],
-                  "additionalProperties": false,
-                  "properties": {
-                    "column": {
-                      "type": "string",
-                      "description": "Source column for the aggregation"
-                    },
-                    "function": {
-                      "type": "string",
-                      "enum": ["sum", "count", "avg", "min", "max", "count_distinct"],
-                      "description": "Aggregation function"
-                    },
-                    "alias": {
-                      "type": "string",
-                      "description": "Output column name for this metric"
-                    }
-                  }
-                }
-              }
-            }
-          }
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what the query does"
         },
-        "filters": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Post-transformation filter conditions"
-        },
-        "column_mappings": {
-          "type": "array",
-          "description": "Column renaming and expression mappings",
-          "items": {
-            "type": "object",
-            "required": ["source", "target"],
-            "additionalProperties": false,
-            "properties": {
-              "source": {
-                "type": "string",
-                "description": "Source column or expression"
-              },
-              "target": {
-                "type": "string",
-                "description": "Target column name"
-              },
-              "expression": {
-                "type": "string",
-                "description": "SQL expression for the mapping"
-              }
-            }
-          }
-        },
-        "custom_sql": {
-          "type": "array",
-          "description": "Custom SQL transformations",
-          "items": {
-            "type": "object",
-            "required": ["name", "sql"],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Name identifier for this SQL block"
-              },
-              "sql": {
-                "type": "string",
-                "description": "SQL statement to execute"
-              },
-              "description": {
-                "type": "string",
-                "description": "Human-readable description of this SQL block"
-              }
-            }
-          }
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Named parameters for the SQL query. These are substituted safely at runtime (e.g., {lookback_months: '13'} used in DATEADD)."
         }
       }
     },
@@ -416,11 +257,11 @@
               },
               "source_expr": {
                 "type": "string",
-                "description": "SQL expression to evaluate against the source"
+                "description": "SQL expression to evaluate against the source (Snowflake)"
               },
               "target_expr": {
                 "type": "string",
-                "description": "SQL expression to evaluate against the target"
+                "description": "SQL expression to evaluate against the target (Iceberg)"
               },
               "tolerance_pct": {
                 "type": "number",

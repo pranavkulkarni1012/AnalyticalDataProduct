@@ -1,6 +1,6 @@
 ---
 name: generate-pipeline
-description: Orchestrator skill that reads compute.engine from the pipeline config and delegates to the appropriate engine-specific skill. Use when the user wants to create or regenerate ETL code from a config.
+description: Orchestrator skill that reads compute.engine from the pipeline config, deploys the generic pipeline for that engine, and generates the product-specific config. Use when the user wants to create or regenerate an ETL pipeline from a config.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -8,16 +8,25 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-pipeline
 
 ## Description
-Orchestrator that reads the pipeline config, determines the compute engine, and delegates
-to the appropriate engine-specific code generation skill. This is the primary entry point
-for generating ETL code from a pipeline configuration.
+Orchestrator that reads the pipeline config, validates it, determines the compute engine,
+and deploys the appropriate generic pipeline. Pipeline code is GENERIC and SHARED across
+all data products for a given engine. This skill does NOT generate per-product pipeline
+code. Instead, it:
 
-For the `glue` engine, code is generated inline by this skill. For `emr`, `lambda`, and
-`ecs` engines, this skill delegates to the respective engine-specific skill.
+1. Deploys the generic pipeline template for the selected engine to `pipelines/generic/{engine}/`
+2. The pipeline config YAML (with `query.sql`) IS the product-specific artifact
+3. At runtime, the generic pipeline reads the config path as a parameter
 
-After code generation, this skill invokes `/generate-step-function` to create the
-orchestration ASL and adds structured logging, error handling, and reconciliation calls
-to all generated code.
+After deploying the generic pipeline, this skill invokes `/generate-step-function` to
+create the orchestration ASL that passes the config path to the generic pipeline at runtime.
+
+## Architecture
+
+- One generic pipeline per engine (Glue/EMR/Lambda/ECS) lives in `templates/`
+- Each data product gets its own config YAML in `configs/` with `query.sql` containing all transformation logic
+- The `source` section has connection info only (not per-table definitions)
+- Multiple data products = multiple configs, ONE shared pipeline codebase
+- No `{{ placeholder }}` code generation -- the config file IS the product-specific artifact
 
 ## Inputs
 - Pipeline config YAML path via `$ARGUMENTS`
@@ -33,14 +42,14 @@ to all generated code.
    - If exactly one config exists, use it automatically.
    - If multiple configs exist, list them and ask the user which one to use.
    - If no configs exist, report an error and stop.
-3. Parse the YAML and extract all top-level sections (`product`, `compute`, `sources`,
-   `transformations`, `target`, `reconciliation`, `runtime`).
+3. Parse the YAML and extract all top-level sections (`product`, `compute`, `source`,
+   `query`, `target`, `reconciliation`, `runtime`).
 
 ### Step 2: Validate Config
 
 1. Invoke `/validate-config` with the config path.
 2. If validation returns **FAIL**, stop and report the errors to the user.
-   Do not proceed with code generation from an invalid config.
+   Do not proceed with pipeline deployment from an invalid config.
 3. If validation returns **PASS** (possibly with warnings), continue.
 
 ### Step 3: Validate Connection
@@ -48,7 +57,7 @@ to all generated code.
 1. Invoke `/validate-connection` with the config path.
 2. If validation returns **FAIL**, stop and report the errors to the user.
    Connection errors (wrong auth, missing proxy, write-capable roles) must be resolved
-   before generating code.
+   before deploying the pipeline.
 3. If validation returns **PASS** (possibly with warnings), continue.
 
 ### Step 4: Determine Compute Engine
@@ -58,280 +67,114 @@ to all generated code.
 3. Read `compute.language` (if present) to confirm consistency:
    - `glue` or `emr` -> `pyspark`
    - `lambda` or `ecs` -> `python`
-4. Extract `product.name` for use in output paths and naming.
+4. Extract `product.name` and `product.domain` for use in output paths and naming.
 
-### Step 5: Generate Engine-Specific Code
+### Step 5: Deploy Generic Pipeline
 
-Based on the value of `compute.engine`, follow the appropriate path:
+Based on the value of `compute.engine`, deploy the generic pipeline by copying
+template files to `pipelines/generic/{engine}/`. If the generic pipeline directory
+already exists (from a previous deployment), update it with the latest templates.
 
-#### Path A: `glue` (Inline Generation)
+#### Path A: `glue` (Inline Deployment)
 
-Generate a complete PySpark Glue job by following these sub-steps. Use the templates
-in `templates/pyspark/` as reference patterns if they exist, but generate the code
-directly from the config values.
+Copy the following files from `templates/` to `pipelines/generic/glue/`:
 
-**Templates** (read if available, for boilerplate patterns):
-- `templates/pyspark/glue_job_boilerplate.py`
-- `templates/pyspark/snowflake_reader_spark.py`
-- `templates/pyspark/iceberg_writer_spark.py`
+1. `templates/pyspark/glue_job_boilerplate.py` -> `pipelines/generic/glue/glue_job_boilerplate.py`
+2. `templates/pyspark/snowflake_reader_spark.py` -> `pipelines/generic/glue/snowflake_reader_spark.py`
+3. `templates/pyspark/iceberg_writer_spark.py` -> `pipelines/generic/glue/iceberg_writer_spark.py`
+4. `templates/common/reconciliation.py` -> `pipelines/generic/glue/reconciliation.py`
+5. `templates/common/data_quality.py` -> `pipelines/generic/glue/data_quality.py`
 
-**Output file**: `pipelines/{product.name}/glue_jobs/{product.name}_etl.py`
-
-**Code structure** (generate in this order):
-
-1. **Module docstring**: Include job name (`adp-{product.domain}-{product.name}-etl-{env}`),
-   product name, domain, version, and "Generated by AI SDLC Pipeline Generator".
-
-2. **Imports**:
-   ```python
-   import sys, os, logging, uuid, json
-   from datetime import datetime
-   import boto3
-   from awsglue.transforms import *
-   from awsglue.utils import getResolvedOptions
-   from awsglue.context import GlueContext
-   from awsglue.job import Job
-   from pyspark.context import SparkContext
-   from pyspark.sql import SparkSession
-   import pyspark.sql.functions as F
-   ```
-
-3. **Structured logging setup**: Create a logger named `{product.name}_etl` with a
-   correlation ID (`uuid.uuid4()`). Format:
-   `%(asctime)s | %(levelname)s | {correlation_id} | %(message)s`
-
-4. **Glue/Spark initialization**:
-   ```python
-   args = getResolvedOptions(sys.argv, ["JOB_NAME", "ENV"])
-   sc = SparkContext()
-   glueContext = GlueContext(sc)
-   spark = glueContext.spark_session
-   job = Job(glueContext)
-   job.init(args["JOB_NAME"], args)
-   env = args["ENV"]
-   ```
-   Immediately after `job.init`, log the job start with job name, environment, and
-   correlation ID.
-
-5. **Main try/except block**: Wrap all data processing in a try/except that:
-   - Catches `Exception`, logs the error with `exc_info=True`, and re-raises
-   - Calls `job.commit()` on success (inside the try, after all processing)
-
-6. **Source reading** -- at the top of the `try` block, before reading any source:
-   a. Set proxy environment variables from `connection.proxy` (both lowercase and
-      uppercase variants: `http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`).
-      Set these once at the top of the try block if all sources share the same proxy.
-   b. Retrieve OAuth token from AWS Secrets Manager:
-      - Secret path: `adp/snowflake/{connection.account}/oauth`
-      - `connection.account` is the full account locator including the region
-        (e.g., `company-prod.us-east-1`), so the path resolves to
-        `adp/snowflake/company-prod.us-east-1/oauth`.
-      - Extract `access_token` from the JSON secret value.
-      - Wrap the Secrets Manager call in its own try/except to provide a clear
-        error message if the token cannot be retrieved.
-   c. Build Snowflake connection options dict (`sf_options_base`):
-      - `sfURL`: `{connection.account}.snowflakecomputing.com`
-        (e.g., `company-prod.us-east-1.snowflakecomputing.com`)
-      - `sfWarehouse`: from `connection.warehouse`
-      - `sfRole`: from `connection.role`
-      - `authenticator`: `oauth`
-      - `token`: the retrieved OAuth token
-      - `use_proxy`: `"true"` (if proxy is configured)
-      - `proxy_host`: hostname extracted from proxy URL
-      - `proxy_port`: port extracted from proxy URL
-
-   Then, **for each source in `sources`**:
-   d. Build a SQL query from the source's `database`, `schema`, `table`, `columns`,
-      and `filters`:
-      - If `columns` is `"*"`, select all columns.
-      - If `columns` is an array, select the listed columns.
-      - If `filters` is a non-empty array, add a `WHERE` clause joining filters
-        with `AND`. These filters use Snowflake SQL syntax (e.g., `DATEADD(...)`)
-        and are pushed down to Snowflake -- do NOT reuse them as PySpark filters.
-   e. Read the DataFrame using `spark.read.format("net.snowflake.spark.snowflake")`
-      with per-source options merged into the base dict:
-      ```python
-      .options(**{
-          **sf_options_base,
-          "sfDatabase": source.database,
-          "sfSchema": source.schema,
-          "query": constructed_query,
-      })
-      ```
-   f. Log the source name and row count after reading.
-
-7. **Generate joins** from `transformations.joins`:
-   - If `transformations.joins` is empty or absent, skip this step. The input
-     DataFrame for sub-step 8 is the sole source DataFrame from sub-step 6.
-     If there are multiple sources but no joins, log a warning.
-   - For each join entry, join the left and right DataFrames using the specified
-     `keys` and `type` (inner, left, right, full).
-   - Drop duplicate join key columns from the right DataFrame.
-   - Log each join operation.
-
-8. **Apply column mappings and generate aggregations**:
-
-   First, apply `transformations.column_mappings` that create derived columns
-   used as grouping dimensions. These must be applied BEFORE the `groupBy` call:
-   - For each column mapping, check if its `expression` appears in the
-     `aggregations[].group_by` list. If so, apply it as a `withColumn` before
-     the aggregation:
-     ```python
-     df = df.withColumn(mapping.target, F.expr(mapping.expression))
-     ```
-   - For `group_by` entries that are SQL-style expressions (e.g.,
-     `DATE_TRUNC('month', ...)`), translate them using `F.expr()`.
-   - For plain column references (e.g., `product_catalog.category`), use
-     `F.col(column).alias(target)` in the `groupBy`.
-
-   Then, generate aggregations from `transformations.aggregations`:
-   - Apply `group_by` columns (using the derived column names from mappings
-     where applicable).
-   - For each metric, apply the appropriate PySpark aggregate function:
-     - `sum` -> `F.sum(column).alias(alias)`
-     - `count` -> `F.count(column).alias(alias)`
-     - `count_distinct` -> `F.countDistinct(column).alias(alias)`
-     - `avg` -> `F.avg(column).alias(alias)`
-     - `min` -> `F.min(column).alias(alias)`
-     - `max` -> `F.max(column).alias(alias)`
-
-   Finally, apply any remaining column mappings that are simple renames
-   (not used in `group_by`) using `withColumnRenamed` after the aggregation.
-
-9. **Apply post-aggregation filters** from `transformations.filters`:
-   - These are PySpark-compatible expressions (e.g., `"total_revenue > 0"`).
-   - Apply using `df.filter(F.expr(filter_expr))`.
-   - Do NOT re-apply `sources[].filters` here -- those were already pushed
-     down to Snowflake as SQL in sub-step 6d.
-
-10. **Write to Iceberg target**:
-    - Target table: `{target.catalog}.{target.database}.{target.table}`
-    - Use `df.writeTo(target_table)`:
-      - If `target.write_mode` is `overwrite`: use `.overwritePartitions()`
-      - If `target.write_mode` is `append`: use `.append()`
-    - Log the target table name and write completion.
-
-11. **Generate reconciliation checks** from `reconciliation.rules`:
-    - For each rule, handle by `type`:
-      - **`null_check`**: Skip `source_expr` (it will be `"N/A"`). Execute only
-        `target_expr` via `spark.sql(target_expr).collect()[0][0]`. Assert the
-        result equals `0` -- any non-zero count is a failure.
-      - **`row_count`, `sum`, `distinct_count`**: Execute `source_expr` against
-        Snowflake using the Spark Snowflake connector:
-        ```python
-        spark.read.format("net.snowflake.spark.snowflake")
-            .options(**{**sf_options_base, "query": source_expr})
-            .load().collect()[0][0]
-        ```
-        Execute `target_expr` via `spark.sql(target_expr).collect()[0][0]`.
-        Calculate percentage difference:
-        For `row_count`/`distinct_count`: `abs(source_val - target_val) / max(source_val, 1) * 100`
-        For `sum`: `abs(source_val - target_val) / max(abs(source_val), 1) * 100`
-        (use `abs()` on denominator for sum rules to handle negative sums correctly).
-        Compare against `tolerance_pct`.
-    - If any check fails, log an error and raise `ValueError` with the rule
-      name and actual diff.
-    - If a check passes, log success with the actual diff percentage.
-    - Log "All reconciliation checks passed" after all rules pass.
-
-12. **Commit**: Call `job.commit()` only after all reconciliation checks pass
-    (at the very end of the try block, after sub-step 11).
+The generic Glue pipeline:
+- Takes a `--config-path` argument (S3 path or local path to the YAML config)
+- Reads the config at runtime to determine source connection, query SQL, target table
+- Executes `query.sql` against Snowflake via the Spark Snowflake connector
+- Writes results to the Iceberg target defined in the config
+- Runs reconciliation checks defined in the config
 
 #### Path B: `emr`
 
 1. Invoke `/generate-emr-pipeline` with the config path.
-2. The EMR skill generates a standalone PySpark script (no GlueContext) at
-   `pipelines/{product.name}/emr_jobs/{product.name}_etl.py`.
+2. The EMR skill deploys the generic EMR pipeline to `pipelines/generic/emr/`.
 
 #### Path C: `lambda`
 
 1. Invoke `/generate-lambda-pipeline` with the config path.
-2. The Lambda skill generates a Python+Pandas handler at
-   `pipelines/{product.name}/lambda_jobs/{product.name}_handler.py`.
+2. The Lambda skill deploys the generic Lambda pipeline to `pipelines/generic/lambda/`.
 
 #### Path D: `ecs`
 
 1. Invoke `/generate-ecs-pipeline` with the config path.
-2. The ECS skill generates a Python+Pandas entrypoint and Dockerfile at
-   `pipelines/{product.name}/ecs_jobs/{product.name}_main.py` and
-   `pipelines/{product.name}/ecs_jobs/Dockerfile`.
+2. The ECS skill deploys the generic ECS pipeline to `pipelines/generic/ecs/`.
 
 ### Step 6: Generate Step Function
 
 1. Invoke `/generate-step-function` with the config path.
 2. The Step Function skill creates an ASL JSON definition at
    `pipelines/{product.name}/step_functions/{product.name}_orchestrator.asl.json`.
-3. The ASL adapts the resource type based on `compute.engine`:
-   - `glue` -> `arn:aws:states:::glue:startJobRun.sync`
-   - `emr` -> `arn:aws:states:::elasticmapreduce:addStep.sync`
-   - `lambda` -> `arn:aws:states:::lambda:invoke`
-   - `ecs` -> `arn:aws:states:::ecs:runTask.sync`
+3. The ASL passes the config path as a parameter to the generic pipeline at runtime:
+   - `glue` -> `arn:aws:states:::glue:startJobRun.sync` with `--config-path` argument
+   - `emr` -> `arn:aws:states:::elasticmapreduce:addStep.sync` with `--config-path` argument
+   - `lambda` -> `arn:aws:states:::lambda:invoke` with `config_path` in event payload
+   - `ecs` -> `arn:aws:states:::ecs:runTask.sync` with `--config-path` argument
 
-### Step 7: Cross-Cutting Concerns
+### Step 7: Cross-Cutting Verification
 
-Verify that the generated code includes all of the following cross-cutting concerns.
-If any are missing, add them:
+Verify that the generic pipeline templates include all of the following cross-cutting
+concerns. If any are missing from the templates, report a warning:
 
-1. **Structured logging**: Every generated Python file must include:
-   - A correlation ID (UUID) set at the start of execution.
-   - Log format: `%(asctime)s | %(levelname)s | {correlation_id} | %(message)s`
-   - Log messages at key points: job start, each source read (with row count),
-     each join, aggregation, write start/complete, reconciliation results, job end.
+1. **Structured logging**: Correlation ID (UUID) set at the start of execution.
+   Log format: `%(asctime)s | %(levelname)s | {correlation_id} | %(message)s`
 
-2. **Error handling**: Every generated Python file must include:
-   - A top-level try/except block around all data processing.
-   - The except block must log the error with `exc_info=True` and re-raise.
-   - For Glue jobs: `job.commit()` must only be called on success.
+2. **Error handling**: Top-level try/except block around all data processing.
+   The except block must log the error with `exc_info=True` and re-raise.
 
-3. **Reconciliation calls**: If `reconciliation.rules` exist in the config:
-   - For Glue/EMR (where Spark is available): generate inline reconciliation
-     checks using the Snowflake Spark connector for source queries and
-     `spark.sql()` for target queries (as described in Step 5 Path A sub-step 11).
-   - For Lambda/ECS: generate a synchronous invocation of the reconciliation
-     Lambda (`adp-{product.name}-recon`) using:
-     ```python
-     lambda_client = boto3.client("lambda")
-     response = lambda_client.invoke(
-         FunctionName=f"adp-{product_name}-recon-{env}",
-         InvocationType="RequestResponse",
-         Payload=json.dumps({"correlation_id": correlation_id})
-     )
-     if response.get("FunctionError"):
-         error_payload = response["Payload"].read().decode("utf-8")
-         raise RuntimeError(f"Reconciliation Lambda failed: {error_payload}")
-     result = json.loads(response["Payload"].read().decode("utf-8"))
-     ```
-     Check the result status and raise an error if reconciliation fails.
+3. **Config-driven execution**: The pipeline reads the config YAML at runtime
+   and extracts source, query, target, and reconciliation settings.
+
+4. **Reconciliation calls**: If `reconciliation.rules` exist in the config:
+   - For Glue/EMR (Spark): inline reconciliation checks using the Snowflake
+     Spark connector for source queries and `spark.sql()` for target queries.
+   - For Lambda/ECS: synchronous invocation of the reconciliation Lambda.
 
 ## Output Summary
 
-After all generation steps complete, present a summary:
+After all deployment steps complete, present a summary:
 
 ```
 ========================================
-PIPELINE GENERATION COMPLETE
+PIPELINE DEPLOYMENT COMPLETE
 Config: [config-file-path]
 Engine: [compute.engine]
 ========================================
 
-Generated Files:
-  1. [path/to/etl_script.py] (ETL job)
-  2. [path/to/orchestrator.asl.json] (Step Function)
+Generic Pipeline:
+  Location: pipelines/generic/[engine]/
+  Files:
+    1. [list of deployed template files]
+
+Product Config:
+  Config: [config-file-path]
+  Query: [first 80 chars of query.sql]...
+
+Orchestration:
+  Step Function: pipelines/{product.name}/step_functions/{product.name}_orchestrator.asl.json
 
 Validation:
   - Config validation: [PASS | PASS (N warnings)]
   - Connection validation: [PASS | PASS (N warnings)]
 
-Features:
-  - Sources: [N] Snowflake sources with OAuth + proxy
-  - Joins: [N] joins generated
-  - Aggregations: [N] metrics computed
-  - Reconciliation: [N] checks embedded
+Config Summary:
+  - Source: Snowflake ({source.connection.account}) with OAuth + proxy
+  - Query: SQL-based transformation ({N} lines)
+  - Target: {target.database}.{target.table} (Iceberg on S3)
+  - Reconciliation: [N] checks defined
   - Logging: Structured with correlation ID
-  - Error handling: try/except with re-raise
+  - Error handling: Built into generic pipeline
 
 Next Steps:
-  - Review generated code in pipelines/{product.name}/
+  - Review config in configs/{product.name}.yaml
+  - Generic pipeline is shared -- do not modify per product
   - Run /generate-terraform to create infrastructure
   - Deploy via CI/CD pipeline
 ========================================

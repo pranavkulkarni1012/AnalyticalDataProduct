@@ -6,6 +6,10 @@ producing a concrete data contract for a specific data product.
 The generated contract can be published to Confluence via the
 Spec Generator Agent.
 
+In the SQL-driven architecture, column schema and lineage are derived
+from the query.sql field and the source connection config, rather than
+from structured transformations.
+
 Usage:
     python governance/generate_data_contract.py --config configs/monthly_revenue_by_category.yaml
     python governance/generate_data_contract.py --config configs/my_product.yaml --output contracts/my_product.yaml
@@ -13,6 +17,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -32,80 +37,142 @@ def load_config(path):
 
 def infer_column_schema(config):
     """
-    Infer the target table column schema from transformations.
+    Infer the target table column schema from query.sql.
 
-    Derives column names, types, and nullability from aggregation
-    metrics, column mappings, and group-by clauses.
+    Parses the final SELECT clause of the SQL to extract column aliases
+    and infer types from common SQL patterns (SUM -> double, COUNT -> long, etc.).
     """
     columns = []
-    transformations = config.get("transformations", {})
+    sql = config.get("query", {}).get("sql", "")
+    if not sql:
+        return columns
 
-    # Columns from aggregation metrics
-    for agg in transformations.get("aggregations", []):
-        for metric in agg.get("metrics", []):
-            col_type = "double" if metric["function"] in ("sum", "avg") else "long"
-            columns.append({
-                "name": metric["alias"],
-                "type": col_type,
-                "nullable": False,
-                "description": f"{metric['function'].upper()}({metric['column']})",
-            })
+    # Extract the outermost SELECT clause (last SELECT in the SQL)
+    # This heuristic works for CTE-based queries where the final SELECT
+    # produces the output columns
+    select_pattern = re.compile(
+        r'\bSELECT\b(.*?)(?:\bFROM\b)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    matches = select_pattern.findall(sql)
+    if not matches:
+        return columns
 
-    # Columns from column_mappings
-    for cm in transformations.get("column_mappings", []):
-        # Infer type from expression -- default to string
-        col_type = "string"
-        expr = cm.get("expression", "")
-        if "DATE_TRUNC" in expr.upper() or "DATE" in expr.upper():
-            col_type = "date"
+    # Use the last SELECT clause (the final output)
+    final_select = matches[-1]
+
+    # Split by comma, handling nested parentheses
+    col_exprs = _split_select_columns(final_select)
+
+    for expr in col_exprs:
+        expr = expr.strip()
+        if not expr:
+            continue
+
+        # Extract alias (AS alias_name)
+        alias_match = re.search(r'\bAS\s+(\w+)\s*$', expr, re.IGNORECASE)
+        if alias_match:
+            col_name = alias_match.group(1)
+        else:
+            # Use the last identifier as the column name
+            ident_match = re.search(r'(\w+)\s*$', expr)
+            col_name = ident_match.group(1) if ident_match else expr.strip()
+
+        # Infer type from expression
+        col_type = _infer_type_from_expr(expr)
+
         columns.append({
-            "name": cm["target"],
+            "name": col_name,
             "type": col_type,
             "nullable": False,
-            "description": cm.get("expression", cm["source"]),
+            "description": expr.strip(),
         })
 
     return columns
 
 
+def _split_select_columns(select_clause):
+    """Split a SELECT clause by commas, respecting parentheses nesting."""
+    parts = []
+    depth = 0
+    current = []
+    for char in select_clause:
+        if char == '(':
+            depth += 1
+            current.append(char)
+        elif char == ')':
+            depth -= 1
+            current.append(char)
+        elif char == ',' and depth == 0:
+            parts.append(''.join(current))
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append(''.join(current))
+    return parts
+
+
+def _infer_type_from_expr(expr):
+    """Infer SQL column type from expression patterns."""
+    upper = expr.upper()
+    if re.search(r'\bSUM\b', upper) or re.search(r'\bAVG\b', upper):
+        return "double"
+    if re.search(r'\bCOUNT\b', upper):
+        return "long"
+    if re.search(r'\bDATE_TRUNC\b', upper) or re.search(r'\bDATE\b', upper):
+        return "date"
+    if re.search(r'\bMIN\b', upper) or re.search(r'\bMAX\b', upper):
+        return "double"
+    return "string"
+
+
 def build_source_lineage(config):
-    """Build source lineage entries from config sources."""
+    """Build source lineage from source connection and query SQL.
+
+    Extracts table references from the SQL query using fully-qualified
+    name patterns (DATABASE.SCHEMA.TABLE).
+    """
     entries = []
-    for source in config.get("sources", []):
-        cols = source.get("columns", [])
-        if isinstance(cols, str):
-            cols = ["*"]
-        entries.append({
-            "name": source["name"],
-            "system": "snowflake",
-            "database": source["database"],
-            "schema": source["schema"],
-            "table": source["table"],
-            "columns": cols,
-        })
+    source = config.get("source", {})
+    sql = config.get("query", {}).get("sql", "")
+
+    # Extract fully-qualified table references from SQL
+    # Matches patterns like "DATABASE"."SCHEMA"."TABLE" or DATABASE.SCHEMA.TABLE
+    fqn_pattern = re.compile(
+        r'"?(\w+)"?\."?(\w+)"?\."?(\w+)"?',
+    )
+    seen = set()
+    for match in fqn_pattern.finditer(sql):
+        db, schema, table = match.group(1), match.group(2), match.group(3)
+        key = f"{db}.{schema}.{table}"
+        if key not in seen:
+            seen.add(key)
+            entries.append({
+                "name": table.lower(),
+                "system": "snowflake",
+                "database": db,
+                "schema": schema,
+                "table": table,
+                "connection_account": source.get("connection", {}).get("account", ""),
+            })
+
     return entries
 
 
 def build_column_mappings(config):
-    """Build column lineage mappings from transformations."""
+    """Build column lineage mappings from the SQL query.
+
+    Extracts column aliases from the final SELECT clause of the SQL.
+    """
     mappings = []
-    transformations = config.get("transformations", {})
-
-    for cm in transformations.get("column_mappings", []):
+    columns = infer_column_schema(config)
+    for col in columns:
         mappings.append({
-            "source": cm["source"],
-            "target": cm["target"],
-            "transformation": cm.get("expression", cm["source"]),
+            "source": col["description"],
+            "target": col["name"],
+            "transformation": col["description"],
         })
-
-    for agg in transformations.get("aggregations", []):
-        for metric in agg.get("metrics", []):
-            mappings.append({
-                "source": metric["column"],
-                "target": metric["alias"],
-                "transformation": f"{metric['function'].upper()}({metric['column']})",
-            })
-
     return mappings
 
 
@@ -209,6 +276,7 @@ def generate_contract(config):
                 "s3_path": target.get("s3_path"),
             },
             "column_mappings": build_column_mappings(config),
+            "query_sql": config.get("query", {}).get("sql", ""),
         },
         "support": {
             "owner_team": product.get("owner"),

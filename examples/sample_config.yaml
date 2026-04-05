@@ -1,9 +1,10 @@
 # configs/monthly_revenue_by_category.yaml
 # Monthly Revenue by Product Category -- Analytical Data Product Pipeline Config
 #
-# Joins customer_orders and product_catalog from Snowflake, aggregates monthly
-# revenue by product category, and writes to an Iceberg table for downstream
-# consumption.
+# This config is consumed by the generic pipeline (Glue/EMR/Lambda/ECS).
+# All transformation logic lives in the SQL query below -- the pipeline code
+# simply connects to Snowflake, executes the query, and writes the result
+# to the Iceberg target. No transformation logic in pipeline code.
 
 product:
   name: monthly_revenue_by_category
@@ -27,97 +28,70 @@ compute:
   engine: glue          # PySpark on AWS Glue
   language: pyspark     # auto-derived from engine
 
-# ── Data Sources ─────────────────────────────────────────────────────
+# -- Snowflake Connection ------------------------------------------------
+# Only connection-level settings are needed here. The SQL query below
+# references tables using fully-qualified names (DATABASE.SCHEMA.TABLE).
+source:
+  type: snowflake
+  connection:
+    account: company-prod.us-east-1
+    warehouse: ANALYTICS_WH
+    role: ADP_READER_ROLE
+    authenticator: oauth
+    proxy:
+      http_proxy: "http://corporate-proxy.company.com:8080"
+      https_proxy: "http://corporate-proxy.company.com:8080"
 
-sources:
-  - name: customer_orders
-    type: snowflake
-    connection:
-      account: company-prod.us-east-1
-      warehouse: ANALYTICS_WH
-      role: ADP_READER_ROLE
-      authenticator: oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: PROD_DB
-    schema: SALES
-    table: CUSTOMER_ORDERS
-    columns:
-      - order_id
-      - customer_id
-      - product_id
-      - order_date
-      - quantity
-      - unit_price
-      - total_amount
-      - order_status
-    filters:
-      - "order_status = 'COMPLETED'"
-      - "order_date >= DATEADD(month, -13, CURRENT_DATE())"
+# -- SQL Query (All Transformation Logic) --------------------------------
+# The query contains ALL transformation logic: filtering, joins, aggregations,
+# column mappings. Uses CTEs for intermediate steps. No temp tables.
+# The generic pipeline executes this SQL against Snowflake, fetches the
+# result set, and writes it directly to the Iceberg target.
+query:
+  sql: |
+    WITH completed_orders AS (
+        SELECT
+            o."order_id",
+            o."product_id",
+            o."order_date",
+            o."quantity",
+            o."unit_price",
+            o."total_amount"
+        FROM "PROD_DB"."SALES"."CUSTOMER_ORDERS" o
+        WHERE o."order_status" = 'COMPLETED'
+          AND o."order_date" >= DATEADD(month, -13, CURRENT_DATE())
+    ),
+    enriched_orders AS (
+        SELECT
+            co."order_id",
+            co."order_date",
+            co."quantity",
+            co."total_amount",
+            p."category",
+            p."product_name",
+            p."subcategory",
+            p."brand"
+        FROM completed_orders co
+        INNER JOIN "PROD_DB"."PRODUCTS"."PRODUCT_CATALOG" p
+            ON co."product_id" = p."product_id"
+    )
+    SELECT
+        eo."category"                              AS product_category,
+        DATE_TRUNC('month', eo."order_date")       AS revenue_month,
+        SUM(eo."total_amount")                     AS total_revenue,
+        COUNT(DISTINCT eo."order_id")              AS order_count,
+        AVG(eo."total_amount")                     AS avg_order_value,
+        SUM(eo."quantity")                         AS total_units_sold
+    FROM enriched_orders eo
+    GROUP BY
+        eo."category",
+        DATE_TRUNC('month', eo."order_date")
+    HAVING SUM(eo."total_amount") > 0
+  description: >
+    Joins customer_orders (filtered to completed, last 13 months) with
+    product_catalog, then aggregates monthly revenue metrics by product category.
 
-  - name: product_catalog
-    type: snowflake
-    connection:
-      account: company-prod.us-east-1
-      warehouse: ANALYTICS_WH
-      role: ADP_READER_ROLE
-      authenticator: oauth
-      proxy:
-        http_proxy: "http://corporate-proxy.company.com:8080"
-        https_proxy: "http://corporate-proxy.company.com:8080"
-    database: PROD_DB
-    schema: PRODUCTS
-    table: PRODUCT_CATALOG
-    columns:
-      - product_id
-      - product_name
-      - category
-      - subcategory
-      - brand
-    filters: []
-
-# ── Transformations ──────────────────────────────────────────────────
-
-transformations:
-  joins:
-    - left: customer_orders
-      right: product_catalog
-      keys:
-        - left_key: product_id
-          right_key: product_id
-      type: inner
-
-  aggregations:
-    - group_by:
-        - "product_catalog.category"
-        - "DATE_TRUNC('month', customer_orders.order_date)"
-      metrics:
-        - column: "customer_orders.total_amount"
-          function: sum
-          alias: total_revenue
-        - column: "customer_orders.order_id"
-          function: count_distinct
-          alias: order_count
-        - column: "customer_orders.total_amount"
-          function: avg
-          alias: avg_order_value
-        - column: "customer_orders.quantity"
-          function: sum
-          alias: total_units_sold
-
-  column_mappings:
-    - source: "DATE_TRUNC('month', customer_orders.order_date)"
-      target: revenue_month
-      expression: "DATE_TRUNC('month', customer_orders.order_date)"
-    - source: "product_catalog.category"
-      target: product_category
-      expression: "product_catalog.category"
-
-  filters:
-    - "total_revenue > 0"
-
-# ── Target ───────────────────────────────────────────────────────────
+# -- Target ---------------------------------------------------------------
 
 target:
   catalog: glue_catalog
@@ -137,7 +111,7 @@ target:
     write.metadata.delete-after-commit.enabled: "true"
     write.metadata.previous-versions-max: "10"
 
-# ── Reconciliation ───────────────────────────────────────────────────
+# -- Reconciliation -------------------------------------------------------
 
 reconciliation:
   enabled: true
@@ -145,9 +119,9 @@ reconciliation:
     - name: total_revenue_check
       type: sum
       source_expr: >
-        SELECT SUM(total_amount) FROM PROD_DB.SALES.CUSTOMER_ORDERS
-        WHERE order_status = 'COMPLETED'
-        AND order_date >= DATEADD(month, -13, CURRENT_DATE())
+        SELECT SUM("total_amount") FROM "PROD_DB"."SALES"."CUSTOMER_ORDERS"
+        WHERE "order_status" = 'COMPLETED'
+        AND "order_date" >= DATEADD(month, -13, CURRENT_DATE())
       target_expr: >
         SELECT SUM(total_revenue)
         FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category
@@ -156,11 +130,11 @@ reconciliation:
     - name: row_count_reasonableness
       type: row_count
       source_expr: >
-        SELECT COUNT(DISTINCT DATE_TRUNC('month', order_date) || '-' || p.category)
-        FROM PROD_DB.SALES.CUSTOMER_ORDERS o
-        INNER JOIN PROD_DB.PRODUCTS.PRODUCT_CATALOG p ON o.product_id = p.product_id
-        WHERE o.order_status = 'COMPLETED'
-        AND o.order_date >= DATEADD(month, -13, CURRENT_DATE())
+        SELECT COUNT(DISTINCT DATE_TRUNC('month', o."order_date") || '-' || p."category")
+        FROM "PROD_DB"."SALES"."CUSTOMER_ORDERS" o
+        INNER JOIN "PROD_DB"."PRODUCTS"."PRODUCT_CATALOG" p ON o."product_id" = p."product_id"
+        WHERE o."order_status" = 'COMPLETED'
+        AND o."order_date" >= DATEADD(month, -13, CURRENT_DATE())
       target_expr: >
         SELECT COUNT(*)
         FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category
@@ -174,7 +148,7 @@ reconciliation:
         WHERE product_category IS NULL
       tolerance_pct: 0.0
 
-# ── Data Quality ─────────────────────────────────────────────────────
+# -- Data Quality ---------------------------------------------------------
 
 data_quality:
   checks:
@@ -195,7 +169,7 @@ data_quality:
       parameters:
         min: 1
 
-# ── Runtime (Glue-specific) ─────────────────────────────────────────
+# -- Runtime (Glue-specific) -----------------------------------------------
 
 runtime:
   glue_version: "4.0"

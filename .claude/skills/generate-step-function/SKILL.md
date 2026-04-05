@@ -59,13 +59,16 @@ Generate the ASL JSON with the following states:
 
 - **Type**: `Task`
 - **Resource**: Engine-specific ARN from Step 2
-- **Parameters**: Engine-specific parameters:
+- **Parameters**: Engine-specific parameters. The generic pipeline takes a config path
+    as a parameter -- derive it from `$.config_s3_path` in the execution input, or
+    default to `s3://{domain}-adp-{env}/configs/{product.name}.yaml`:
   - **Glue**:
     ```json
     {
       "JobName": "{job_name}",
       "Arguments": {
         "--ENV.$": "$.env",
+        "--CONFIG_PATH.$": "$.config_s3_path",
         "--JOB_NAME": "{job_name}"
       }
     }
@@ -78,7 +81,7 @@ Generate the ASL JSON with the following states:
       "JobDriver": {
         "SparkSubmit": {
           "EntryPoint": "s3://{script_s3_path}/{product.name}_etl.py",
-          "EntryPointArguments.$": "States.Array('--env', $.env, '--job-name', '{job_name}')",
+          "EntryPointArguments.$": "States.Array('--env', $.env, '--config-path', $.config_s3_path, '--job-name', '{job_name}')",
           "SparkSubmitParameters": "--conf spark.executor.instances=2"
         }
       }
@@ -95,7 +98,8 @@ Generate the ASL JSON with the following states:
     {
       "FunctionName": "{job_name}",
       "Payload": {
-        "env.$": "$.env"
+        "env.$": "$.env",
+        "config_path.$": "$.config_s3_path"
       }
     }
     ```
@@ -108,7 +112,7 @@ Generate the ASL JSON with the following states:
       "Overrides": {
         "ContainerOverrides": [{
           "Name": "{product.name}-container",
-          "Command.$": "States.Array('python', '{product.name}_main.py', '--env', $.env)"
+          "Command.$": "States.Array('python', '{product.name}_main.py', '--env', $.env, '--config-path', $.config_s3_path)"
         }]
       },
       "NetworkConfiguration": {

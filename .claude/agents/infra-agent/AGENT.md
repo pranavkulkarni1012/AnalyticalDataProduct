@@ -2,6 +2,7 @@
 name: infra-agent
 description: Generates Terraform configurations, runs fmt/validate/plan, and handles deployment with environment-aware logic (auto-apply for non-prod, PR for prod).
 tools: "Read Write Bash Glob Grep mcp__github__create_branch mcp__github__push_files mcp__github__create_pull_request mcp__github__list_pull_requests"
+model: claude-opus-4-6
 ---
 
 # Subagent: Infra Agent

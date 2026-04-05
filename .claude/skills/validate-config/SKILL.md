@@ -9,8 +9,11 @@ allowed-tools: Read Grep Bash
 
 ## Description
 Validates a pipeline configuration YAML against the JSON Schema and performs semantic checks
-that go beyond schema validation. This skill is the gatekeeper for all downstream code
-generation -- no pipeline should be generated from an invalid config.
+that go beyond schema validation. This skill is the gatekeeper for all downstream pipeline
+deployment -- no pipeline should be deployed from an invalid config.
+
+The config uses the generic pipeline architecture where `source` is a single connection
+object, `query.sql` contains all transformation logic, and pipeline code is shared.
 
 ## Inputs
 - Pipeline config YAML path via `$ARGUMENTS`
@@ -60,8 +63,8 @@ If schema validation fails, collect errors and continue with semantic checks.
 Verify the following required keys are present (7 required, 1 optional):
 - `product` (required)
 - `compute` (required)
-- `sources` (required)
-- `transformations` (required)
+- `source` (required) -- single object, NOT an array
+- `query` (required)
 - `target` (required)
 - `reconciliation` (required)
 - `runtime` (required)
@@ -84,33 +87,40 @@ Verify the following required keys are present (7 required, 1 optional):
 
 ### Step 6: Source Validation
 
-For each source in `sources`:
-1. `name` is present and non-empty.
-2. `type` is `snowflake` (only supported source type).
-3. `connection` has required fields: `account`, `warehouse`, `role`, `authenticator`.
-4. `connection.authenticator` must be `oauth` (no password or keypair authentication allowed).
-5. If `connection.proxy` is present, both `connection.proxy.http_proxy` and `connection.proxy.https_proxy` must be non-empty.
-6. `database`, `schema`, `table` are all present and non-empty.
-7. `columns` is either `"*"` or a non-empty array of strings.
+Validate the single `source` object (not an array):
 
-### Step 7: Transformation Validation
+1. `source.type` is `snowflake` (only supported source type).
+2. `source.connection` is present and has required fields: `account`, `warehouse`, `role`, `authenticator`.
+3. `source.connection.authenticator` must be `oauth` (no password or keypair authentication allowed).
+4. If `source.connection.proxy` is present, both `source.connection.proxy.http_proxy` and `source.connection.proxy.https_proxy` must be non-empty.
+5. `source.connection.account` is non-empty.
+6. `source.connection.warehouse` is non-empty.
+7. `source.connection.role` is non-empty.
 
-1. For each join in `transformations.joins`:
-   - `left` and `right` reference valid source names (must exist in `sources[].name`).
-   - `type` is one of: `inner`, `left`, `right`, `full`.
-   - `keys` is a non-empty array with `left_key` and `right_key` in each entry.
-2. For each aggregation in `transformations.aggregations`:
-   - `group_by` is a non-empty array.
-   - Each metric has `column`, `function` (one of: sum, count, avg, min, max, count_distinct), and `alias`.
-3. **Snowflake write operation check**: Scan ALL string values in the `transformations` section
-   for SQL write keywords: `INSERT INTO`, `MERGE INTO`, `UPDATE`, `DELETE FROM`, `CREATE TABLE`,
-   `DROP TABLE`, `ALTER TABLE`, `TRUNCATE`. Specifically scan these fields:
-   - `transformations.custom_sql[].sql`
-   - `transformations.column_mappings[].expression`
-   - `transformations.filters[]`
-   - All other string values in the transformations section
-   Match case-insensitively (e.g., `insert into`, `Insert Into`, `INSERT INTO` all match).
-   If any write keywords are found, report as a CRITICAL error. Snowflake access is READ-ONLY.
+Note: The `source` section contains connection info ONLY. There are no `database`, `schema`,
+`table`, or `columns` fields -- those details are embedded in `query.sql`.
+
+### Step 7: Query Validation
+
+Validate the `query` section:
+
+1. `query.sql` must be present and non-empty.
+2. Trim leading whitespace from `query.sql` and verify it starts with `SELECT` or `WITH`
+   (case-insensitive). If it does not, report as an ERROR.
+3. **DML/DDL safety scan** -- CRITICAL: Scan `query.sql` for the following keywords
+   (case-insensitive, matching as whole words or at word boundaries):
+   - `INSERT`
+   - `UPDATE`
+   - `DELETE`
+   - `MERGE`
+   - `DROP`
+   - `ALTER`
+   - `TRUNCATE`
+   - `CREATE`
+   If any of these keywords are found, report as a **CRITICAL** error. Snowflake access
+   is READ-ONLY. The SQL must be a pure SELECT/WITH query.
+4. If `query.sql` contains subqueries or CTEs, that is acceptable as long as the
+   outermost statement is SELECT/WITH and no DML/DDL keywords are present.
 
 ### Step 8: Target Validation
 
@@ -175,8 +185,8 @@ Warnings (N):
 Summary:
   - Top-level keys: OK/FAIL
   - Schema validation: OK/FAIL
-  - Sources: N sources validated, OK/FAIL
-  - Transformations: OK/FAIL (no Snowflake writes detected)
+  - Source: Connection validated, OK/FAIL
+  - Query: SQL validated, OK/FAIL (no DML/DDL detected)
   - Target: OK/FAIL
   - Reconciliation: N rules validated, OK/FAIL
   - Data Quality: N checks validated, OK/SKIPPED
@@ -187,6 +197,6 @@ Summary:
 
 - If there are ANY errors (CRITICAL or ERROR), the overall result is **FAIL**.
 - Warnings do not cause a FAIL but should be reported.
-- CRITICAL errors indicate security or compliance violations (e.g., Snowflake write operations).
+- CRITICAL errors indicate security or compliance violations (e.g., DML/DDL in query.sql).
 - Omit the Errors section entirely if there are 0 errors.
 - Omit the Warnings section entirely if there are 0 warnings.

@@ -41,8 +41,8 @@ from config values regardless of whether templates exist.
    skeleton module with a warning log and return an empty PASS report.
 4. Extract `target.catalog`, `target.database`, `target.table` for target
    queries.
-5. Extract `sources[N].connection.*` for Snowflake source queries (connection
-   is nested inside each source entry, not at the top level).
+5. Extract `source.connection.*` for Snowflake source queries (connection
+   is nested inside the single `source` object in the config).
 
 ### Step 2: Determine Execution Context
 
