@@ -16,8 +16,10 @@ captures the transformation logic described in the ticket.
 - Jira ticket key (e.g., SCRUM-4)
 
 ## Process
-1. Generate a `run_id` as a UUID4 string. This `run_id` is used as the namespace for all
-   downstream artifacts (`artifacts/{run_id}/01-requirements.json`, `02-spec.json`, etc.).
+1. Use the `run_id` provided in the prompt (from the `/run-sdlc` orchestrator). If no
+   `run_id` is provided (standalone invocation), generate one as a UUID4 string. This
+   `run_id` is used as the namespace for all downstream artifacts
+   (`artifacts/{run_id}/01-requirements.json`, `02-spec.json`, etc.).
    Include it in the output JSON so downstream agents can reference it.
 2. Call `mcp__atlassian__getAccessibleAtlassianResources` to obtain the cloud ID.
 3. Call `mcp__atlassian__getJiraIssue` to fetch the ticket: title, description, acceptance

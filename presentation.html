@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI SDLC - Analytical Data Products</title>
+<style>
+  :root {
+    --primary: #1a1a2e;
+    --secondary: #16213e;
+    --accent: #0f3460;
+    --highlight: #e94560;
+    --text: #eee;
+    --muted: #aab;
+    --card-bg: rgba(255,255,255,0.05);
+    --success: #4ecca3;
+    --warn: #f0c040;
+    --fail: #e94560;
+    --blue: #4ea8de;
+    --purple: #a78bfa;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--primary);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  /* --- Navigation --- */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(26,26,46,0.95); backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    display: flex; align-items: center; gap: 1.5rem;
+    padding: 0.6rem 2rem; font-size: 0.85rem;
+  }
+  nav .logo { font-weight: 700; font-size: 1rem; color: var(--highlight); white-space: nowrap; }
+  nav a { color: var(--muted); text-decoration: none; transition: color .2s; white-space: nowrap; }
+  nav a:hover { color: var(--text); }
+
+  /* --- Sections --- */
+  section {
+    min-height: 100vh; padding: 6rem 2rem 4rem;
+    max-width: 1200px; margin: 0 auto;
+  }
+  section:first-of-type { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+
+  h1 { font-size: 3rem; font-weight: 800; margin-bottom: 0.5rem; }
+  h1 span { color: var(--highlight); }
+  h2 { font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem; border-bottom: 2px solid var(--highlight); padding-bottom: 0.5rem; display: inline-block; }
+  h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.75rem; color: var(--blue); }
+  h4 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.4rem; color: var(--purple); }
+
+  .subtitle { font-size: 1.25rem; color: var(--muted); max-width: 700px; margin-bottom: 2rem; }
+
+  /* --- Cards --- */
+  .card {
+    background: var(--card-bg); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 1.5rem; margin-bottom: 1.25rem;
+    transition: transform .2s, border-color .2s;
+  }
+  .card:hover { transform: translateY(-2px); border-color: rgba(233,69,96,0.3); }
+
+  .card-header {
+    display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;
+  }
+  .card-header .num {
+    background: var(--highlight); color: #fff; font-weight: 700; font-size: 0.85rem;
+    width: 2rem; height: 2rem; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0;
+  }
+  .card-header .title { font-weight: 700; font-size: 1.1rem; }
+  .card-header .badge {
+    font-size: 0.7rem; padding: 0.15rem 0.55rem; border-radius: 9999px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .badge-agent { background: rgba(167,139,250,0.2); color: var(--purple); border: 1px solid rgba(167,139,250,0.3); }
+  .badge-skill { background: rgba(78,168,222,0.2); color: var(--blue); border: 1px solid rgba(78,168,222,0.3); }
+  .badge-stop  { background: rgba(233,69,96,0.15); color: var(--fail); border: 1px solid rgba(233,69,96,0.3); }
+  .badge-cont  { background: rgba(78,204,163,0.15); color: var(--success); border: 1px solid rgba(78,204,163,0.3); }
+
+  .card p, .card li { color: var(--muted); font-size: 0.92rem; }
+  .card ul { padding-left: 1.25rem; }
+  .card li { margin-bottom: 0.3rem; }
+  .card strong { color: var(--text); }
+
+  .io-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.75rem;
+  }
+  .io-box {
+    background: rgba(0,0,0,0.2); border-radius: 8px; padding: 0.75rem 1rem;
+    font-size: 0.85rem;
+  }
+  .io-box .label { font-weight: 700; font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 0.3rem; }
+  .io-box.input .label { color: var(--blue); }
+  .io-box.output .label { color: var(--success); }
+  .io-box code { font-size: 0.8rem; color: var(--warn); }
+
+  /* --- Flow Diagram --- */
+  .flow {
+    display: flex; flex-direction: column; align-items: center; gap: 0; margin: 2rem 0;
+  }
+  .flow-step {
+    background: var(--card-bg); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 1rem 1.5rem; width: 100%; max-width: 720px;
+    display: grid; grid-template-columns: 2.5rem 1fr auto; align-items: center; gap: 1rem;
+  }
+  .flow-step .step-num {
+    background: var(--highlight); color: #fff; font-weight: 700;
+    width: 2.2rem; height: 2.2rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 0.9rem;
+  }
+  .flow-step .step-info { line-height: 1.4; }
+  .flow-step .step-name { font-weight: 700; font-size: 1rem; }
+  .flow-step .step-desc { font-size: 0.82rem; color: var(--muted); }
+  .flow-step .step-meta { text-align: right; font-size: 0.75rem; }
+  .flow-arrow {
+    width: 2px; height: 1.5rem; background: var(--highlight); position: relative;
+  }
+  .flow-arrow::after {
+    content: ''; position: absolute; bottom: -4px; left: -4px;
+    border-left: 5px solid transparent; border-right: 5px solid transparent;
+    border-top: 6px solid var(--highlight);
+  }
+
+  /* --- Grid layouts --- */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+
+  /* --- Tables --- */
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.88rem; }
+  th { text-align: left; padding: 0.6rem 0.75rem; background: rgba(255,255,255,0.05);
+    font-weight: 600; color: var(--blue); border-bottom: 2px solid rgba(255,255,255,0.1); }
+  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--muted); }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  td code { color: var(--warn); font-size: 0.82rem; }
+
+  /* --- Stat boxes --- */
+  .stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: 2rem 0; justify-content: center; }
+  .stat {
+    background: var(--card-bg); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 1.25rem 1.75rem; text-align: center; min-width: 140px;
+  }
+  .stat .num { font-size: 2.5rem; font-weight: 800; color: var(--highlight); }
+  .stat .label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* --- Connector line between sections --- */
+  .section-connector {
+    display: flex; justify-content: center; padding: 0;
+    min-height: auto !important;
+  }
+  .section-connector .line {
+    width: 2px; height: 3rem; background: linear-gradient(to bottom, var(--highlight), transparent);
+  }
+
+  /* --- Engine cards --- */
+  .engine-card {
+    background: var(--card-bg); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 1.25rem; text-align: center;
+  }
+  .engine-card .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .engine-card .ename { font-weight: 700; font-size: 1rem; margin-bottom: 0.25rem; }
+  .engine-card .edesc { font-size: 0.8rem; color: var(--muted); }
+
+  /* --- Constraint list --- */
+  .constraint-list { list-style: none; padding: 0; }
+  .constraint-list li {
+    padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex; align-items: flex-start; gap: 0.75rem; color: var(--muted); font-size: 0.9rem;
+  }
+  .constraint-list .icon { flex-shrink: 0; width: 1.25rem; text-align: center; }
+
+  /* --- Responsive --- */
+  @media (max-width: 768px) {
+    h1 { font-size: 2rem; }
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .io-row { grid-template-columns: 1fr; }
+    .flow-step { grid-template-columns: 2rem 1fr; }
+    .flow-step .step-meta { display: none; }
+    nav { flex-wrap: wrap; gap: 0.5rem; }
+  }
+
+  /* print */
+  @media print {
+    nav { display: none; }
+    section { min-height: auto; page-break-inside: avoid; padding: 2rem 1rem; }
+    body { background: #fff; color: #222; }
+    .card { border: 1px solid #ddd; }
+    .card p, .card li, td { color: #444; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav>
+  <span class="logo">AI SDLC</span>
+  <a href="#home">Home</a>
+  <a href="#overview">Overview</a>
+  <a href="#flow">Pipeline Flow</a>
+  <a href="#agents">Agents</a>
+  <a href="#skills">Skills</a>
+  <a href="#engines">Engines</a>
+  <a href="#constraints">Constraints</a>
+  <a href="#outputs">Outputs</a>
+</nav>
+
+<!-- ==================== SLIDE 1: TITLE ==================== -->
+<section id="home">
+  <h1>AI <span>SDLC</span></h1>
+  <p class="subtitle">
+    End-to-end AI-driven pipeline that transforms a Jira ticket into a fully deployed,
+    validated Analytical Data Product on AWS &mdash; in minutes, not weeks.
+  </p>
+  <div class="stats">
+    <div class="stat"><div class="num">6</div><div class="label">Agents</div></div>
+    <div class="stat"><div class="num">10</div><div class="label">Skills</div></div>
+    <div class="stat"><div class="num">4</div><div class="label">Compute Engines</div></div>
+    <div class="stat"><div class="num">7</div><div class="label">Config Sections</div></div>
+    <div class="stat"><div class="num">1</div><div class="label">Orchestrator</div></div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 2: OVERVIEW ==================== -->
+<section id="overview">
+  <h2>Architecture Overview</h2>
+  <p style="color:var(--muted); margin-bottom:2rem; max-width:800px;">
+    A <strong>config-driven, SQL-first</strong> framework where one generic pipeline per compute engine
+    serves all data products. Each product is defined entirely by a YAML config containing
+    the SQL query. No per-product code generation &mdash; only the config differs.
+  </p>
+
+  <div class="grid-3">
+    <div class="card" style="border-left: 3px solid var(--highlight);">
+      <h4>Config-Driven</h4>
+      <p>Single YAML file with SQL defines your entire data product. Pipeline code is generic and shared.</p>
+    </div>
+    <div class="card" style="border-left: 3px solid var(--blue);">
+      <h4>SQL-First</h4>
+      <p>All transformation logic (CTEs, joins, aggregations) lives in <code>query.sql</code> inside the config.</p>
+    </div>
+    <div class="card" style="border-left: 3px solid var(--purple);">
+      <h4>Agent-Driven</h4>
+      <p>6 specialized AI agents handle each stage. All code, infra, and tests are generated on demand.</p>
+    </div>
+  </div>
+
+  <h3>High-Level Flow</h3>
+  <div class="card" style="text-align:center; padding: 2rem;">
+    <p style="font-size: 0.95rem; font-family: monospace; line-height: 2.2; color: var(--text);">
+      <strong style="color:var(--highlight);">Jira Ticket</strong>
+      &nbsp;&rarr;&nbsp; Parsed Requirements
+      &nbsp;&rarr;&nbsp; Technical Spec + Confluence
+      &nbsp;&rarr;&nbsp; <strong style="color:var(--warn);">Pipeline Config (YAML + SQL)</strong><br>
+      &rarr;&nbsp; Generic Pipeline + Step Function + Terraform
+      &nbsp;&rarr;&nbsp; CI/CD Build &amp; Deploy
+      &nbsp;&rarr;&nbsp; <strong style="color:var(--success);">Validation &amp; Production Monitoring</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 3: PIPELINE FLOW ==================== -->
+<section id="flow">
+  <h2>End-to-End Pipeline Flow</h2>
+  <p style="color:var(--muted); margin-bottom: 1.5rem;">
+    The <code>/run-sdlc</code> orchestrator skill chains 6 agents in sequence.
+    Each stage produces a numbered artifact that the next stage consumes.
+  </p>
+
+  <div class="flow">
+    <!-- Stage 0 -->
+    <div class="flow-step" style="border-left: 3px solid var(--highlight);">
+      <div class="step-num">0</div>
+      <div class="step-info">
+        <div class="step-name">Initialize Run</div>
+        <div class="step-desc">Generate <code>run_id</code> (UUID), parse arguments, create <code>artifacts/{run_id}/</code></div>
+      </div>
+      <div class="step-meta"><span class="badge badge-skill">Skill</span><br><code>/run-sdlc</code></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 1 -->
+    <div class="flow-step" style="border-left: 3px solid var(--fail);">
+      <div class="step-num">1</div>
+      <div class="step-info">
+        <div class="step-name">Parse Requirements</div>
+        <div class="step-desc">Fetch Jira ticket via MCP, extract source tables, draft SQL, identify target</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>requirement-parser</code><br><span class="badge badge-stop" style="margin-top:4px;">Stop on fail</span></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 2 -->
+    <div class="flow-step" style="border-left: 3px solid var(--fail);">
+      <div class="step-num">2</div>
+      <div class="step-info">
+        <div class="step-name">Generate Technical Spec</div>
+        <div class="step-desc">Refine SQL (CTEs, FQNs, double-quoted identifiers), define source/target/recon, publish to Confluence</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>spec-generator</code><br><span class="badge badge-stop" style="margin-top:4px;">Stop on fail</span></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 3 -->
+    <div class="flow-step" style="border-left: 3px solid var(--fail);">
+      <div class="step-num">3</div>
+      <div class="step-info">
+        <div class="step-name">Generate Pipeline Config</div>
+        <div class="step-desc">Map spec to YAML with 7 sections, apply engine defaults, validate schema + connection (3 retries)</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>config-generator</code><br><span class="badge badge-stop" style="margin-top:4px;">Stop on fail</span></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 4 -->
+    <div class="flow-step" style="border-left: 3px solid var(--success);">
+      <div class="step-num">4</div>
+      <div class="step-info">
+        <div class="step-name">Generate Pipeline Code</div>
+        <div class="step-desc">Deploy generic pipeline per engine, generate Step Function ASL, create pytest stubs, lint + auto-fix</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>pipeline-generator</code><br><span class="badge badge-cont" style="margin-top:4px;">Continue on fail</span></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 5 -->
+    <div class="flow-step" style="border-left: 3px solid var(--success);">
+      <div class="step-num">5</div>
+      <div class="step-info">
+        <div class="step-name">Infrastructure (Terraform)</div>
+        <div class="step-desc">Generate Terraform modules (IAM, StepFn, monitoring), fmt/validate/plan. Auto-apply dev, PR for prod.</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>infra-agent</code><br><span class="badge badge-cont" style="margin-top:4px;">Continue on fail</span></div>
+    </div>
+    <div class="flow-arrow"></div>
+
+    <!-- Stage 6 -->
+    <div class="flow-step" style="border-left: 3px solid var(--success);">
+      <div class="step-num">6</div>
+      <div class="step-info">
+        <div class="step-name">Validation (QA)</div>
+        <div class="step-desc">Run reconciliation (source vs target), data quality checks, post results to Jira, transition ticket</div>
+      </div>
+      <div class="step-meta"><span class="badge badge-agent">Agent</span><br><code>qa-agent</code><br><span class="badge badge-cont" style="margin-top:4px;">Continue on fail</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <h4 style="color:var(--highlight);">Error Handling Strategy</h4>
+    <p>Stages 1&ndash;3 are <strong>hard stops</strong> &mdash; downstream agents cannot produce meaningful output without structured requirements, production-ready SQL, and a validated config.
+       Stages 4&ndash;6 are <strong>soft failures</strong> &mdash; code can be regenerated, infrastructure issues are often environment-specific, and QA failures indicate data issues rather than pipeline issues.</p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 4: AGENTS ==================== -->
+<section id="agents">
+  <h2>Subagent Reference</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    Each agent is a specialized Claude Code subagent (<code>model: claude-opus-4-6</code>) with scoped tool permissions.
+    Agents are spawned in sequence by the <code>/run-sdlc</code> orchestrator.
+  </p>
+
+  <!-- Agent 1 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">1</div>
+      <div class="title">Requirement Parser</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Reads a Jira ticket via Atlassian MCP and extracts a structured requirement object with draft SQL.</p>
+    <ul>
+      <li>Fetches ticket title, description, acceptance criteria, labels, and components</li>
+      <li>Identifies source tables with fully-qualified names (DATABASE.SCHEMA.TABLE)</li>
+      <li>Drafts <code>suggested_sql</code> with CTEs, joins, and aggregations</li>
+      <li>Handles missing fields gracefully &mdash; sets to <code>null</code> with warnings (never fails)</li>
+      <li>Posts extraction summary comment back to Jira</li>
+    </ul>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div>Jira ticket key (e.g. <code>SCRUM-123</code>)</div>
+      <div class="io-box output"><div class="label">Output</div><code>artifacts/{run_id}/01-requirements.json</code></div>
+    </div>
+  </div>
+
+  <!-- Agent 2 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">2</div>
+      <div class="title">Spec Generator</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Refines draft requirements into a production-ready technical specification with polished SQL, then publishes to Confluence.</p>
+    <ul>
+      <li>Fully-qualifies all table names with double-quoted identifiers</li>
+      <li>Structures SQL as CTEs for clarity and maintainability</li>
+      <li>Defines single source connection (OAuth + proxy), target Iceberg schema, partition spec</li>
+      <li>Selects compute engine (Glue default, or Lambda/ECS/EMR based on workload)</li>
+      <li>Defines reconciliation rules (row_count, sum, distinct_count) with source &amp; target SQL</li>
+      <li>Publishes formatted spec to Confluence and links it on the Jira ticket</li>
+    </ul>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div><code>01-requirements.json</code></div>
+      <div class="io-box output"><div class="label">Output</div><code>02-spec.json</code> + Confluence page + Jira comment</div>
+    </div>
+  </div>
+
+  <!-- Agent 3 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">3</div>
+      <div class="title">Config Generator</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Transforms the technical spec into a validated pipeline config YAML with engine-specific defaults and auto-fix retries.</p>
+    <ul>
+      <li>Maps spec into YAML with 7 required sections (product, compute, source, query, target, reconciliation, runtime)</li>
+      <li>Applies engine-specific defaults (Glue: G.2X/10 workers; Lambda: 3008 MB; ECS: 2048 CPU; EMR: serverless)</li>
+      <li>Validates against embedded JSON Schema via <code>/validate-config</code> skill (up to 3 auto-fix attempts)</li>
+      <li>Validates Snowflake connection via <code>/validate-connection</code> skill</li>
+      <li>Writes to both <code>artifacts/</code> and durable <code>configs/</code> directory</li>
+    </ul>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div><code>02-spec.json</code></div>
+      <div class="io-box output"><div class="label">Output</div><code>03-config.yaml</code> + <code>configs/{product_name}.yaml</code></div>
+    </div>
+  </div>
+
+  <!-- Agent 4 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">4</div>
+      <div class="title">Pipeline Generator</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Deploys the generic shared pipeline for the compute engine, generates Step Function orchestration, and produces test stubs.</p>
+    <ul>
+      <li>Invokes <code>/generate-pipeline</code> &rarr; deploys generic code to <code>pipelines/generic/{engine}/</code></li>
+      <li>Invokes <code>/generate-step-function</code> &rarr; creates ASL JSON with engine-specific task resource</li>
+      <li>Generates pytest test stubs (config integrity, SQL validation, source/target/recon tests)</li>
+      <li>Runs flake8 + bandit linting with up to 3 auto-fix iterations</li>
+    </ul>
+    <p style="margin-top:0.5rem;"><strong>Skills used:</strong>
+      <code>/generate-pipeline</code>,
+      <code>/generate-step-function</code>,
+      <code>/generate-{glue|emr|lambda|ecs}-pipeline</code>
+    </p>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div><code>03-config.yaml</code></div>
+      <div class="io-box output"><div class="label">Output</div><code>pipelines/generic/{engine}/</code> + <code>pipelines/{product}/step_functions/</code> + <code>pipelines/{product}/tests/</code></div>
+    </div>
+  </div>
+
+  <!-- Agent 5 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">5</div>
+      <div class="title">Infra Agent</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Generates Terraform infrastructure-as-code, validates it, and deploys with strict environment-aware controls.</p>
+    <ul>
+      <li>Invokes <code>/generate-terraform</code> &rarr; creates modules for IAM, Step Functions, monitoring, engine resources</li>
+      <li>Runs <code>terraform fmt</code>, <code>validate</code>, and <code>plan</code></li>
+      <li><strong>Non-prod (dev/staging):</strong> Auto-apply if no resource destruction</li>
+      <li><strong>Production:</strong> NEVER auto-apply &mdash; creates GitHub PR with plan output for human approval</li>
+      <li>Generates per-environment configs with scaled-down dev/staging defaults</li>
+    </ul>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div><code>03-config.yaml</code> + env</div>
+      <div class="io-box output"><div class="label">Output</div><code>terraform/</code> + plan output + PR (for prod)</div>
+    </div>
+  </div>
+
+  <!-- Agent 6 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="num">6</div>
+      <div class="title">QA Agent</div>
+      <span class="badge badge-agent">Agent</span>
+    </div>
+    <p><strong>Role:</strong> Runs reconciliation and data quality checks, generates a validation report, posts results to Jira, and transitions the ticket.</p>
+    <ul>
+      <li>Invokes <code>/run-recon</code> &rarr; compares source (Snowflake) vs target (Iceberg) metrics</li>
+      <li>Runs data quality checks: not_null, unique, range, regex, custom</li>
+      <li>Generates structured validation report with per-rule results</li>
+      <li>Posts results table to Jira as a comment</li>
+      <li>Transitions Jira ticket: <strong style="color:var(--success);">PASS &rarr; Done</strong>, <strong style="color:var(--fail);">FAIL &rarr; Blocked</strong></li>
+    </ul>
+    <div class="io-row">
+      <div class="io-box input"><div class="label">Input</div><code>03-config.yaml</code> + Jira ticket</div>
+      <div class="io-box output"><div class="label">Output</div><code>06-validation-report.json</code> + Jira comment + ticket transition</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 5: SKILLS ==================== -->
+<section id="skills">
+  <h2>Skills Reference</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    Skills are reusable slash-command procedures invoked by agents (or directly by users).
+    Each skill performs a focused, deterministic task.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Skill</th>
+        <th>Slash Command</th>
+        <th>Purpose</th>
+        <th>Used By</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>run-sdlc</strong></td>
+        <td><code>/run-sdlc &lt;ticket&gt;</code></td>
+        <td>End-to-end orchestrator &mdash; chains all 6 agents in sequence</td>
+        <td>User (entry point)</td>
+      </tr>
+      <tr>
+        <td><strong>validate-config</strong></td>
+        <td><code>/validate-config</code></td>
+        <td>JSON Schema + 12 semantic checks on pipeline config YAML</td>
+        <td>config-generator, pipeline-generator</td>
+      </tr>
+      <tr>
+        <td><strong>validate-connection</strong></td>
+        <td><code>/validate-connection</code></td>
+        <td>Snowflake OAuth, proxy, role, account validation</td>
+        <td>config-generator, pipeline-generator</td>
+      </tr>
+      <tr>
+        <td><strong>generate-pipeline</strong></td>
+        <td><code>/generate-pipeline</code></td>
+        <td>Orchestrator: validates, determines engine, deploys generic pipeline</td>
+        <td>pipeline-generator agent</td>
+      </tr>
+      <tr>
+        <td><strong>generate-step-function</strong></td>
+        <td><code>/generate-step-function</code></td>
+        <td>AWS Step Function ASL JSON with engine-specific task types</td>
+        <td>pipeline-generator agent</td>
+      </tr>
+      <tr>
+        <td><strong>generate-terraform</strong></td>
+        <td><code>/generate-terraform</code></td>
+        <td>Terraform modules: IAM, Step Functions, monitoring, engine resources</td>
+        <td>infra-agent</td>
+      </tr>
+      <tr>
+        <td><strong>generate-emr-pipeline</strong></td>
+        <td><code>/generate-emr-pipeline</code></td>
+        <td>Generic PySpark EMR pipeline (SparkSession, no GlueContext)</td>
+        <td>generate-pipeline skill</td>
+      </tr>
+      <tr>
+        <td><strong>generate-lambda-pipeline</strong></td>
+        <td><code>/generate-lambda-pipeline</code></td>
+        <td>Generic Python+Pandas Lambda handler</td>
+        <td>generate-pipeline skill</td>
+      </tr>
+      <tr>
+        <td><strong>generate-ecs-pipeline</strong></td>
+        <td><code>/generate-ecs-pipeline</code></td>
+        <td>Generic Python+Pandas ECS task + Dockerfile</td>
+        <td>generate-pipeline skill</td>
+      </tr>
+      <tr>
+        <td><strong>run-recon</strong></td>
+        <td><code>/run-recon</code></td>
+        <td>Reconciliation module: source vs target comparison (4 rule types)</td>
+        <td>qa-agent</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Skills &harr; Agents Relationship</h3>
+  <div class="card" style="padding: 2rem; text-align: center;">
+    <p style="font-family: monospace; font-size: 0.9rem; line-height: 2.5; color: var(--text);">
+      <span style="color:var(--purple);">requirement-parser</span> &rarr; <em>(no skills &mdash; uses MCP directly)</em><br>
+      <span style="color:var(--purple);">spec-generator</span> &rarr; <em>(no skills &mdash; uses MCP directly)</em><br>
+      <span style="color:var(--purple);">config-generator</span> &rarr;
+        <span style="color:var(--blue);">/validate-config</span> +
+        <span style="color:var(--blue);">/validate-connection</span><br>
+      <span style="color:var(--purple);">pipeline-generator</span> &rarr;
+        <span style="color:var(--blue);">/generate-pipeline</span> &rarr;
+        <span style="color:var(--blue);">/generate-{engine}-pipeline</span> +
+        <span style="color:var(--blue);">/generate-step-function</span><br>
+      <span style="color:var(--purple);">infra-agent</span> &rarr;
+        <span style="color:var(--blue);">/generate-terraform</span><br>
+      <span style="color:var(--purple);">qa-agent</span> &rarr;
+        <span style="color:var(--blue);">/run-recon</span> +
+        <span style="color:var(--blue);">/validate-config</span>
+    </p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 6: COMPUTE ENGINES ==================== -->
+<section id="engines">
+  <h2>Supported Compute Engines</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    One generic pipeline per engine serves ALL data products.
+    The config YAML is the only product-specific artifact.
+  </p>
+
+  <div class="grid-4">
+    <div class="engine-card" style="border-top: 3px solid #f0c040;">
+      <div class="icon">&#9881;</div>
+      <div class="ename">AWS Glue</div>
+      <div class="edesc">PySpark + GlueContext<br>Large-scale ETL &gt;1 GB<br><strong>Default engine</strong></div>
+    </div>
+    <div class="engine-card" style="border-top: 3px solid #4ea8de;">
+      <div class="icon">&#9889;</div>
+      <div class="ename">AWS EMR</div>
+      <div class="edesc">PySpark + SparkSession<br>Custom Spark / GPU / &gt;100 GB<br>Serverless preferred</div>
+    </div>
+    <div class="engine-card" style="border-top: 3px solid #4ecca3;">
+      <div class="icon">&#955;</div>
+      <div class="ename">AWS Lambda</div>
+      <div class="edesc">Python + Pandas<br>&lt;1 GB, &lt;15 min runtime<br>Event-driven</div>
+    </div>
+    <div class="engine-card" style="border-top: 3px solid #a78bfa;">
+      <div class="icon">&#9634;</div>
+      <div class="ename">AWS ECS</div>
+      <div class="edesc">Python + Pandas + Docker<br>Long-running, no Spark<br>No timeout limit</div>
+    </div>
+  </div>
+
+  <h3>Engine Selection Decision Tree</h3>
+  <div class="card" style="padding: 1.5rem;">
+    <table>
+      <thead>
+        <tr><th>Criterion</th><th>Glue</th><th>EMR</th><th>Lambda</th><th>ECS</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Dataset size</td><td>&gt; 1 GB</td><td>&gt; 100 GB</td><td>&lt; 1 GB</td><td>Any (Python)</td></tr>
+        <tr><td>Runtime limit</td><td>2880 min</td><td>Unlimited</td><td>15 min</td><td>Unlimited</td></tr>
+        <tr><td>Language</td><td>PySpark</td><td>PySpark</td><td>Python</td><td>Python</td></tr>
+        <tr><td>Spark needed?</td><td>Yes</td><td>Yes</td><td>No</td><td>No</td></tr>
+        <tr><td>Use case</td><td>Default ETL</td><td>GPU / Custom Spark</td><td>Small &amp; fast</td><td>Long Python jobs</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Generic Pipeline Files Per Engine</h3>
+  <div class="grid-2">
+    <div class="card">
+      <h4>Glue / EMR (PySpark)</h4>
+      <ul>
+        <li><code>{engine}_job_boilerplate.py</code> &mdash; entrypoint</li>
+        <li><code>snowflake_reader_spark.py</code> &mdash; Spark Snowflake connector</li>
+        <li><code>iceberg_writer_spark.py</code> &mdash; <code>df.writeTo()</code></li>
+        <li><code>reconciliation.py</code> &mdash; PySpark variant</li>
+        <li><code>data_quality.py</code> &mdash; duck-typed checks</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Lambda / ECS (Python)</h4>
+      <ul>
+        <li><code>lambda_handler.py</code> or <code>ecs_entrypoint.py</code></li>
+        <li><code>snowflake_reader_pandas.py</code> &mdash; DBAPI cursor</li>
+        <li><code>iceberg_writer_pyiceberg.py</code> &mdash; PyIceberg + Glue Catalog</li>
+        <li><code>reconciliation.py</code> &mdash; Pandas variant</li>
+        <li><code>data_quality.py</code> &mdash; duck-typed checks</li>
+        <li><code>Dockerfile</code> + <code>requirements.txt</code> (ECS only)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 7: HARD CONSTRAINTS ==================== -->
+<section id="constraints">
+  <h2>Hard Constraints &amp; Guardrails</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    Non-negotiable rules enforced at multiple layers: CLAUDE.md instructions, hooks, skill validation, and agent logic.
+  </p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>Data Sources</h4>
+      <ul class="constraint-list">
+        <li><span class="icon" style="color:var(--fail);">&#10005;</span> Snowflake is <strong>read-only</strong> &mdash; no INSERT, UPDATE, DELETE, DDL</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> OAuth authentication <strong>only</strong> &mdash; no passwords, no key-pair</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Corporate proxy required when <code>proxy</code> config present</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> OAuth tokens from AWS Secrets Manager only</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Data Targets</h4>
+      <ul class="constraint-list">
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Apache Iceberg tables on S3 via Glue Catalog <strong>only</strong></li>
+        <li><span class="icon" style="color:var(--fail);">&#10005;</span> No Hive, Delta, or Hudi table formats</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Iceberg format-version 2 enforced</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Infrastructure</h4>
+      <ul class="constraint-list">
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Terraform as sole IaC tool &mdash; no CloudFormation, CDK, Pulumi</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Separate AWS accounts per environment (dev, staging, prod)</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Remote state in S3 + DynamoDB locking</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Security &amp; Deployment</h4>
+      <ul class="constraint-list">
+        <li><span class="icon" style="color:var(--fail);">&#10005;</span> No hardcoded credentials, tokens, or secrets</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Least-privilege IAM scoped to specific resources</li>
+        <li><span class="icon" style="color:var(--fail);">&#10005;</span> Production: <strong>never</strong> auto-apply Terraform &mdash; always PR with 2 approvals</li>
+        <li><span class="icon" style="color:var(--success);">&#10003;</span> Jenkins CI + Harness CD mandated</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Automated Guardrails</h3>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Guardrail</th><th>Enforcement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Hook</td><td>DML/DDL guard on YAML files</td><td>Blocks write if config contains INSERT, UPDATE, DELETE, etc.</td></tr>
+      <tr><td>Hook</td><td>Python linter on .py files</td><td>Runs flake8 after every Python file edit (advisory)</td></tr>
+      <tr><td>Skill</td><td><code>/validate-config</code></td><td>12 semantic checks including DML/DDL scan of <code>query.sql</code></td></tr>
+      <tr><td>Skill</td><td><code>/validate-connection</code></td><td>Blocks non-OAuth auth, write-capable roles, missing proxy</td></tr>
+      <tr><td>Agent</td><td>infra-agent</td><td>Never auto-applies Terraform to production</td></tr>
+      <tr><td>Agent</td><td>pipeline-generator</td><td>Runs flake8 + bandit with auto-fix loop (3 retries)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================== SLIDE 8: OUTPUTS ==================== -->
+<section id="outputs">
+  <h2>Generated Outputs</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    Each run produces intermediate artifacts (cleaned up) and durable outputs (persisted).
+  </p>
+
+  <h3>Per-Run Artifacts <span style="font-weight:400; color:var(--muted); font-size:0.85rem;">(artifacts/{run_id}/)</span></h3>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Artifact</th><th>Producer</th><th>Retained?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>01</td><td><code>requirements.json</code></td><td>requirement-parser</td><td style="color:var(--fail);">Cleaned up</td></tr>
+      <tr><td>02</td><td><code>spec.json</code></td><td>spec-generator</td><td style="color:var(--fail);">Cleaned up</td></tr>
+      <tr><td>03</td><td><code>config.yaml</code></td><td>config-generator</td><td style="color:var(--fail);">Cleaned up (copy in configs/)</td></tr>
+      <tr><td>04</td><td><code>code/</code></td><td>pipeline-generator</td><td style="color:var(--fail);">Cleaned up (copy in pipelines/)</td></tr>
+      <tr><td>05</td><td><code>infra-state/</code></td><td>infra-agent</td><td style="color:var(--warn);">Kept (audit)</td></tr>
+      <tr><td>06</td><td><code>validation-report.json</code></td><td>qa-agent</td><td style="color:var(--success);">Kept (audit trail)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Durable Outputs <span style="font-weight:400; color:var(--muted); font-size:0.85rem;">(persisted across runs)</span></h3>
+  <table>
+    <thead>
+      <tr><th>Directory</th><th>Content</th><th>Producer</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>configs/{product}.yaml</code></td><td>Pipeline config with SQL &mdash; the product definition</td><td>config-generator</td></tr>
+      <tr><td><code>pipelines/generic/{engine}/</code></td><td>Shared pipeline code (5&ndash;7 files per engine)</td><td>/generate-pipeline</td></tr>
+      <tr><td><code>pipelines/{product}/step_functions/</code></td><td>Step Function ASL JSON</td><td>/generate-step-function</td></tr>
+      <tr><td><code>pipelines/{product}/tests/</code></td><td>pytest test stubs</td><td>pipeline-generator</td></tr>
+      <tr><td><code>pipelines/{product}/recon/</code></td><td>Reconciliation module</td><td>/run-recon</td></tr>
+      <tr><td><code>terraform/modules/</code></td><td>IAM, Step Functions, monitoring, engine resources</td><td>/generate-terraform</td></tr>
+      <tr><td><code>terraform/environments/</code></td><td>Per-env configs (dev, staging, prod)</td><td>infra-agent</td></tr>
+    </tbody>
+  </table>
+
+  <h3>CI/CD Workflow</h3>
+  <div class="grid-2">
+    <div class="card" style="border-left: 3px solid var(--blue);">
+      <h4>Jenkins (CI)</h4>
+      <p>Build &rarr; Validate Config &rarr; Lint (flake8 + bandit) &rarr; Unit Test (pytest) &rarr; Terraform Validate &rarr; Package &rarr; Terraform Plan</p>
+    </div>
+    <div class="card" style="border-left: 3px solid var(--success);">
+      <h4>Harness (CD)</h4>
+      <p><strong>DEV:</strong> Auto-deploy<br>
+         <strong>STAGING:</strong> 1 approval (24h timeout)<br>
+         <strong>PROD:</strong> 2 approvals (48h timeout) &mdash; data platform lead + product owner</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== FOOTER ==================== -->
+<section style="min-height: auto; padding: 3rem 2rem; text-align: center;">
+  <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 2rem;">
+    <p style="color: var(--muted); font-size: 0.85rem;">
+      AI SDLC &mdash; Analytical Data Products &nbsp;|&nbsp; Powered by Claude Code (Opus 4.6) &nbsp;|&nbsp; Generated 2026-04-07
+    </p>
+  </div>
+</section>
+
+</body>
+</html>

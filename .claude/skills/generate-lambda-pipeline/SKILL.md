@@ -1,6 +1,6 @@
 ---
 name: generate-lambda-pipeline
-description: Deploys the generic Lambda Python+Pandas pipeline by copying templates and shared modules to pipelines/generic/lambda/. Use when compute.engine is lambda.
+description: Generates the generic Lambda Python+Pandas pipeline with shared modules in pipelines/generic/lambda/. Use when compute.engine is lambda.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -8,11 +8,11 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-lambda-pipeline
 
 ## Description
-Deploys the generic Lambda Python+Pandas pipeline by copying template files and shared
-modules to `pipelines/generic/lambda/`. Pipeline code is GENERIC and SHARED -- this skill
-does NOT generate per-product code. The generic pipeline reads a config YAML at runtime
-(passed via `config_path` in the Lambda event payload) to determine source connection,
-query SQL, target table, and reconciliation rules.
+Generates the generic Lambda Python+Pandas pipeline code and writes it to
+`pipelines/generic/lambda/`. Pipeline code is GENERIC and SHARED -- this skill does NOT
+generate per-product code. The generic pipeline reads a config YAML at runtime (passed
+via `config_path` in the Lambda event payload) to determine source connection, query SQL,
+target table, and reconciliation rules.
 
 Uses `snowflake-connector-python` (DBAPI) for Snowflake reads and `pyiceberg` for
 Iceberg writes. All transformations live in `query.sql` within the config -- no Spark dependency.
@@ -53,22 +53,22 @@ run both validators first.
    `reconciliation`, `runtime` sections.
 3. Verify `compute.engine` is `lambda`.
 
-### Step 2: Deploy Generic Lambda Pipeline
+### Step 2: Generate Generic Lambda Pipeline
 
-Copy the following files from `templates/` to `pipelines/generic/lambda/`:
+Generate the following files in `pipelines/generic/lambda/`:
 
-1. `templates/python/lambda_handler.py` -> `pipelines/generic/lambda/lambda_handler.py`
-2. `templates/python/snowflake_reader_pandas.py` -> `pipelines/generic/lambda/snowflake_reader_pandas.py`
-3. `templates/python/iceberg_writer_pyiceberg.py` -> `pipelines/generic/lambda/iceberg_writer_pyiceberg.py`
-4. `templates/common/reconciliation.py` -> `pipelines/generic/lambda/reconciliation.py`
-5. `templates/common/data_quality.py` -> `pipelines/generic/lambda/data_quality.py`
+1. `lambda_handler.py` -- Generic Lambda handler with `handler(event, context)` signature
+2. `snowflake_reader_pandas.py` -- Snowflake DBAPI reader using `cursor.fetch_pandas_all()`
+3. `iceberg_writer_pyiceberg.py` -- PyIceberg writer using Glue Catalog
+4. `reconciliation.py` -- Shared reconciliation logic (Python+Pandas variant)
+5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
 
 Create the `pipelines/generic/lambda/` directory if it does not exist. If it already
-exists, overwrite with the latest templates.
+exists, overwrite with the latest code.
 
-### Step 3: Deploy requirements.txt
+### Step 3: Generate requirements.txt
 
-Copy or generate a `requirements.txt` at `pipelines/generic/lambda/requirements.txt`:
+Generate a `requirements.txt` at `pipelines/generic/lambda/requirements.txt`:
 
 ```
 snowflake-connector-python[pandas]>=3.0.0

@@ -162,6 +162,18 @@ For each environment (`dev`, `staging`, `prod`):
   - **ECS**: dev: cpu=256/memory=512, staging: cpu=512/memory=1024, prod: from config
 - Do NOT include `account_id` in tfvars (use `data "aws_caller_identity"` instead)
 
+#### `terraform/environments/{env}/backend-{env}.hcl`
+- Backend configuration for remote state:
+  ```hcl
+  bucket         = "adp-terraform-state-{env}"
+  key            = "adp/{domain}/{product_name}/terraform.tfstate"
+  region         = "us-east-1"
+  dynamodb_table = "adp-terraform-locks-{env}"
+  encrypt        = true
+  ```
+- Replace `{env}`, `{domain}`, and `{product_name}` with actual values from the config.
+- This file is used by `terraform init -backend-config="backend-{env}.hcl"`.
+
 #### `terraform/environments/.gitignore`
 Generate a `.gitignore` file containing:
 ```
@@ -231,7 +243,7 @@ Generated Modules:
   Common:
     - terraform/modules/iam/ (IAM roles and policies)
     - terraform/modules/step_function/ (Step Function state machine)
-    - terraform/modules/lambda/ (Lambda function)
+    - terraform/modules/reconciliation_lambda/ (Reconciliation Lambda)
     - terraform/modules/monitoring/ (CloudWatch, SNS, EventBridge)
 
   Engine-Specific:

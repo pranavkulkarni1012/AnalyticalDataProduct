@@ -1,7 +1,7 @@
 # AI SDLC: Analytical Data Product -- Producer Instructions
 
-**Version:** 1.0.0
-**Last Updated:** 2026-04-04
+**Version:** 2.0.0
+**Last Updated:** 2026-04-07
 
 This document explains how a data product producer can use the AI SDLC framework to build, deploy, and operate an Analytical Data Product pipeline on AWS. It covers what to clone, what inputs to provide, how to interact with Claude Code, and what outputs to expect at each stage.
 
@@ -11,21 +11,19 @@ This document explains how a data product producer can use the AI SDLC framework
 
 1. [Overview](#1-overview)
 2. [Prerequisites](#2-prerequisites)
-3. [Quick Start (5-Minute Setup)](#3-quick-start)
+3. [Quick Start](#3-quick-start)
 4. [What You Clone](#4-what-you-clone)
-5. [Repository Structure After Bootstrap](#5-repository-structure-after-bootstrap)
-6. [The AI SDLC Pipeline: Stage by Stage](#6-the-ai-sdlc-pipeline-stage-by-stage)
-7. [Providing Input to Claude](#7-providing-input-to-claude)
-8. [Pipeline Configuration Reference](#8-pipeline-configuration-reference)
-9. [Compute Engine Selection Guide](#9-compute-engine-selection-guide)
-10. [Skills Reference (Slash Commands)](#10-skills-reference)
-11. [Subagent Reference](#11-subagent-reference)
-12. [Hooks and Guardrails](#12-hooks-and-guardrails)
-13. [CI/CD Workflow](#13-cicd-workflow)
-14. [Governance Artifacts](#14-governance-artifacts)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Security Model](#16-security-model)
-17. [Review Summary](#17-review-summary)
+5. [The AI SDLC Pipeline: Stage by Stage](#5-the-ai-sdlc-pipeline-stage-by-stage)
+6. [Providing Input to Claude](#6-providing-input-to-claude)
+7. [Pipeline Configuration Reference](#7-pipeline-configuration-reference)
+8. [Compute Engine Selection Guide](#8-compute-engine-selection-guide)
+9. [Skills Reference (Slash Commands)](#9-skills-reference)
+10. [Subagent Reference](#10-subagent-reference)
+11. [Hooks and Guardrails](#11-hooks-and-guardrails)
+12. [CI/CD Workflow](#12-cicd-workflow)
+13. [Generated Artifacts](#13-generated-artifacts)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Security Model](#15-security-model)
 
 ---
 
@@ -36,7 +34,7 @@ The AI SDLC framework converts a business requirement (captured as a Jira ticket
 - **Config-driven** -- a single YAML file (with SQL) defines your entire data product
 - **Generic pipeline** -- one shared, reusable pipeline per engine; no per-product code generation
 - **SQL-driven** -- all transformation logic (CTEs, joins, aggregations) lives in the config SQL
-- **Guardrailed** -- hooks enforce security and compliance at every stage
+- **Agent-driven** -- all code, infrastructure, and tests are generated on demand by skills and agents
 - **Multi-engine** -- supports Glue (PySpark), EMR (PySpark), Lambda (Python), and ECS (Python)
 
 **End-to-end flow:**
@@ -60,13 +58,13 @@ Each stage is handled by a specialized Claude Code subagent (all using `model: c
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Claude Code CLI | Latest | AI agent orchestration |
-| Python | 3.11+ | ETL code, scripts, tests |
+| Python | 3.11+ | ETL code and tests |
 | Terraform | >= 1.5.0 | Infrastructure provisioning |
 | AWS CLI | v2 | AWS interactions |
 | Git | Latest | Version control |
 | jq | Latest | JSON processing (used by hooks) |
 | flake8 | Latest | Python linting (hook) |
-| bandit | Latest | Security scanning (hook) |
+| bandit | Latest | Security scanning |
 | hadolint | Latest (optional) | Dockerfile linting (ECS only) |
 | pytest | Latest | Testing framework |
 
@@ -88,7 +86,6 @@ Each stage is handled by a specialized Claude Code subagent (all using `model: c
 export ATLASSIAN_API_TOKEN="your-atlassian-api-token"
 export AWS_REGION="us-east-1"
 export AWS_PROFILE="your-aws-profile"        # or use AWS_ACCESS_KEY_ID/SECRET
-export ADP_TEMPLATE_REPO="/path/to/AnalyticalDataProduct"  # this repo
 ```
 
 ---
@@ -96,126 +93,64 @@ export ADP_TEMPLATE_REPO="/path/to/AnalyticalDataProduct"  # this repo
 ## 3. Quick Start
 
 ```bash
-# 1. Clone the template repository
+# 1. Clone the repository
 git clone <repo-url> AnalyticalDataProduct
 cd AnalyticalDataProduct
 
-# 2. Bootstrap a new data product
-bash scripts/init_product.sh my_product_name my_domain
-cd analytical-data-product-my_product_name
-
-# 3. Initialize git
-git init && git add -A && git commit -m "Initial scaffold"
-
-# 4. Start Claude Code
+# 2. Start Claude Code
 claude
 
-# 5. Option A: Full AI SDLC from a Jira ticket
+# 3. Option A: Full AI SDLC from a Jira ticket
 #    Tell Claude: "Run the full AI SDLC pipeline for ticket SCRUM-123"
 
-# 5. Option B: Start from a config file
-#    Edit configs/my_product_name.yaml with your pipeline definition, then:
-#    /generate-pipeline configs/my_product_name.yaml
+# 4. Option B: Write a config manually and generate the pipeline
+#    Create configs/my_product.yaml (see Section 6 for format)
+#    Then run: /generate-pipeline configs/my_product.yaml
 ```
 
 ---
 
 ## 4. What You Clone
 
-Clone the **AnalyticalDataProduct** repository. This is the template repository containing all framework components:
+Clone the **AnalyticalDataProduct** repository. This is a minimal, agent-driven repo where all
+code generation logic lives in skills and agents under `.claude/`.
 
 ```
 AnalyticalDataProduct/
   .claude/
-    skills/           # 9 slash-command skills (code generation, validation, etc.)
+    skills/           # 10 slash-command skills (code generation, validation, orchestration)
     agents/           # 6 subagent definitions (requirement-parser, spec-generator, etc.)
     settings.json     # Hook registrations and tool permissions
-  configs/            # Pipeline config YAMLs (one per data product, contains SQL)
-  schemas/            # JSON Schema for config validation
-  templates/
-    common/           # Shared: reconciliation.py, data_quality.py
-    pyspark/          # Glue/EMR: generic pipeline, Snowflake reader, Iceberg writer
-    python/           # Lambda/ECS: generic pipeline, Snowflake reader, Iceberg writer, Dockerfile
-  hooks/              # 5 guardrail hook scripts
-  terraform/
-    modules/          # 8 reusable Terraform modules
-    environments/     # dev, staging, prod configurations
-  tests/              # pytest framework with fixtures and test examples
-  scripts/            # CLI utilities (validate, recon, smoke test, etc.)
-  governance/         # Data contracts, lineage generators, dashboard templates
-  harness/            # Harness CD pipeline YAML
-  Jenkinsfile         # Jenkins CI pipeline
+    settings.local.json  # Local overrides (MCP permissions, allowed commands)
   CLAUDE.md           # AI agent instructions and hard constraints
-  AI_SDLC_Plan.md    # Full architecture and design document
-  AI_SDLC_Stories.md  # Implementation stories reference
+  instruction.md      # This file -- producer guide
+  requirements.txt    # Python dependencies
+  README.md           # Project overview
 ```
 
-### What the Bootstrap Script Creates
+There are no pre-existing template files, scripts, terraform modules, or test boilerplate.
+Everything is generated on demand by the skills and agents when you invoke them.
 
-Running `scripts/init_product.sh <product_name> <domain>` creates a new directory `analytical-data-product-<product_name>/` with:
+### What Gets Generated at Runtime
 
-- Full directory structure matching the template
-- Product-specific `CLAUDE.md` with your domain and product name
-- `.claude/settings.json` with all 5 hooks registered
-- `.mcp.json` with Atlassian MCP configuration
-- `.gitignore` protecting sensitive files
-- `README.md` with getting started instructions
-
-The script is **idempotent** -- safe to re-run without overwriting existing files.
-
----
-
-## 5. Repository Structure After Bootstrap
-
-After running `init_product.sh monthly_revenue my_domain`, you get:
+When skills and agents run, they create these directories:
 
 ```
-analytical-data-product-monthly_revenue/
-  .claude/
-    skills/
-      generate-pipeline/SKILL.md        # Orchestrator: delegates by engine
-      generate-emr-pipeline/SKILL.md    # EMR PySpark code generation
-      generate-lambda-pipeline/SKILL.md # Lambda Python code generation
-      generate-ecs-pipeline/SKILL.md    # ECS Python + Dockerfile generation
-      generate-step-function/SKILL.md   # Step Function ASL generation
-      generate-terraform/SKILL.md       # Terraform module generation
-      validate-config/SKILL.md          # Config schema validation
-      validate-connection/SKILL.md      # Snowflake connection validation
-      run-recon/SKILL.md                # Reconciliation check generation
-    agents/
-      requirement-parser/AGENT.md       # Jira ticket -> requirements JSON
-      spec-generator/AGENT.md           # Requirements -> technical spec
-      config-generator/AGENT.md         # Spec -> pipeline config YAML
-      pipeline-generator/AGENT.md       # Config -> ETL code + tests
-      infra-agent/AGENT.md              # Config -> Terraform + deploy
-      qa-agent/AGENT.md                 # Post-deploy validation
-    settings.json                       # Hooks + permissions
-  configs/
-    monthly_revenue.yaml                # Your pipeline config (create this)
-  schemas/
-    pipeline_config_schema.json         # Validation schema
-  templates/                            # Copied from template repo
-  hooks/                                # 5 guardrail scripts
-  terraform/                            # Modules + environment configs
-  tests/                                # Test framework
-  scripts/                              # Utility scripts
+  configs/                    # Pipeline config YAMLs (generated by config-generator agent)
   pipelines/
-    generic/                            # Shared pipeline code (one per engine)
-      glue/                             # Generic Glue job + shared modules
-      emr/                              # Generic EMR job + shared modules
-      lambda/                           # Generic Lambda handler + shared modules
-      ecs/                              # Generic ECS entrypoint + Dockerfile
-    monthly_revenue/                    # Product-specific artifacts
-      step_functions/                   # Step Function ASL (passes config to generic pipeline)
-      tests/                            # Product-specific test stubs
-  CLAUDE.md
-  .mcp.json
-  .gitignore
+    generic/{engine}/         # Generic pipeline code (generated by /generate-pipeline)
+    {product}/
+      step_functions/         # Step Function ASL (generated by /generate-step-function)
+      tests/                  # pytest stubs (generated by pipeline-generator agent)
+  terraform/
+    modules/                  # IAM, Step Functions, monitoring (generated by /generate-terraform)
+    environments/             # dev/, staging/, prod/ tfvars (generated by infra-agent)
+  artifacts/{run_id}/         # Per-run artifacts (01-requirements through 06-validation-report)
 ```
 
 ---
 
-## 6. The AI SDLC Pipeline: Stage by Stage
+## 5. The AI SDLC Pipeline: Stage by Stage
 
 ### Stage 1: Intake (Requirement Parser)
 
@@ -230,8 +165,9 @@ Parse requirements from Jira ticket SCRUM-123
 The requirement-parser agent:
 1. Fetches the Jira ticket via Atlassian MCP
 2. Extracts data sources, transformations, target, schedule, and quality requirements
-3. Writes a structured JSON requirements file
-4. Posts a summary comment back to the Jira ticket
+3. Drafts a suggested SQL query with CTEs and fully-qualified table names
+4. Writes a structured JSON requirements file
+5. Posts a summary comment back to the Jira ticket
 
 ### Stage 2: Specification (Spec Generator)
 
@@ -263,13 +199,13 @@ Generate the pipeline configuration from the technical spec
 The config-generator agent:
 1. Maps the spec into pipeline config YAML
 2. Applies engine-specific defaults (Glue: G.2X workers, 120 min; Lambda: 3008 MB, 900 sec; etc.)
-3. Validates against the JSON Schema with up to 3 auto-fix attempts
+3. Validates against the JSON Schema (embedded in the `/validate-config` skill) with up to 3 auto-fix attempts
 4. Validates Snowflake connection settings (OAuth, proxy, role naming)
 
 ### Stage 4: Code Generation (Pipeline Generator)
 
 **Input:** `03-config.yaml`
-**Output:** `pipelines/{product_name}/` with ETL code, Step Function, test stubs
+**Output:** `pipelines/generic/{engine}/` + `pipelines/{product_name}/`
 
 Tell Claude:
 ```
@@ -278,12 +214,12 @@ Generate the pipeline code from the config
 
 Or use the slash command directly:
 ```
-/generate-pipeline configs/monthly_revenue.yaml
+/generate-pipeline configs/my_product.yaml
 ```
 
 The pipeline-generator agent:
 1. Reads `compute.engine` from the config
-2. Deploys the generic pipeline for the selected engine (if not already deployed) -- shared code, not per-product
+2. Generates the generic pipeline for the selected engine (if not already generated) -- shared code, not per-product
 3. Generates a Step Function ASL JSON that passes the config path to the generic pipeline
 4. Creates pytest test stubs validating config integrity and SQL
 5. Runs flake8 + bandit with up to 3 auto-fix attempts
@@ -300,10 +236,10 @@ Generate and deploy infrastructure for the pipeline
 
 Or:
 ```
-/generate-terraform configs/monthly_revenue.yaml
+/generate-terraform configs/my_product.yaml
 ```
 
-The infra-agent agent:
+The infra-agent:
 1. Generates Terraform modules (IAM, compute engine, Step Function, Lambda recon, monitoring)
 2. Runs `terraform fmt` and `terraform validate`
 3. Creates a Terraform plan
@@ -320,7 +256,7 @@ Tell Claude:
 Run validation checks on the deployed pipeline
 ```
 
-The qa-agent agent:
+The qa-agent:
 1. Runs reconciliation checks (source vs target: row_count, sum, distinct_count, null_check)
 2. Runs data quality checks (not_null, unique, range, regex)
 3. Generates a validation report
@@ -339,7 +275,7 @@ Claude will orchestrate all 6 agents in sequence, passing artifacts between stag
 
 ---
 
-## 7. Providing Input to Claude
+## 6. Providing Input to Claude
 
 ### What Claude Needs From You
 
@@ -347,14 +283,14 @@ Claude will orchestrate all 6 agents in sequence, passing artifacts between stag
 |-------|-----------|----------------|
 | **Intake** | Jira ticket ID | "Parse requirements from SCRUM-123" |
 | **Spec** | Nothing (uses previous output) | "Generate the technical spec" |
-| **Config** | Nothing, or manual config YAML | Edit `configs/{product}.yaml` or let agent generate |
+| **Config** | Nothing, or manual config YAML | Create `configs/{product}.yaml` or let agent generate |
 | **Code Gen** | Config path | `/generate-pipeline configs/my_product.yaml` |
 | **Infra** | Config path + target environment | "Deploy infrastructure for dev environment" |
 | **Validation** | Config path + environment | "Run reconciliation checks on staging" |
 
 ### Writing a Config YAML Manually
 
-If you prefer to skip Stages 1-3 and write your own config, create a file in `configs/` following this structure. Use `configs/monthly_revenue_by_category.yaml` or `examples/sample_config.yaml` as a reference.
+If you prefer to skip Stages 1-3 and write your own config, create a file in `configs/`.
 
 **Minimum viable config:**
 
@@ -439,7 +375,7 @@ runtime:
   tags:
     environment: prod
     team: my-team
-  # Engine-specific fields (see Section 8)
+  # Engine-specific fields (see Section 7)
   glue_version: "4.0"
   worker_type: G.2X
   num_workers: 10
@@ -456,7 +392,7 @@ Before generating code, validate your config:
 
 ---
 
-## 8. Pipeline Configuration Reference
+## 7. Pipeline Configuration Reference
 
 ### Required Sections
 
@@ -540,7 +476,7 @@ runtime:
 
 ---
 
-## 9. Compute Engine Selection Guide
+## 8. Compute Engine Selection Guide
 
 ```
                     Dataset Size
@@ -567,13 +503,13 @@ runtime:
 
 ---
 
-## 10. Skills Reference
+## 9. Skills Reference
 
 Skills are invoked as slash commands in Claude Code. Each skill performs a specific task.
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
-| **validate-config** | `/validate-config [config-path]` | Validate config YAML against schema |
+| **validate-config** | `/validate-config [config-path]` | Validate config YAML against embedded schema |
 | **validate-connection** | `/validate-connection [config-path]` | Validate Snowflake OAuth, proxy, role |
 | **generate-pipeline** | `/generate-pipeline [config-path]` | Orchestrator: generates all code based on engine |
 | **generate-emr-pipeline** | `/generate-emr-pipeline [config-path]` | Generate PySpark EMR job (SparkSession, no GlueContext) |
@@ -582,6 +518,7 @@ Skills are invoked as slash commands in Claude Code. Each skill performs a speci
 | **generate-step-function** | `/generate-step-function [config-path]` | Generate Step Function ASL JSON |
 | **generate-terraform** | `/generate-terraform [config-path]` | Generate Terraform modules for all infrastructure |
 | **run-recon** | `/run-recon [config-path]` | Generate reconciliation check module |
+| **run-sdlc** | `/run-sdlc <ticket-key> [--env dev\|staging\|prod] [--skip-infra] [--skip-qa]` | Run full end-to-end AI SDLC pipeline from Jira ticket |
 
 **Typical workflow:**
 ```
@@ -595,7 +532,7 @@ Note: `/generate-pipeline` automatically calls `/validate-config` and `/validate
 
 ---
 
-## 11. Subagent Reference
+## 10. Subagent Reference
 
 Subagents are specialized Claude Code agents that handle complex, multi-step tasks.
 
@@ -611,43 +548,45 @@ Subagents are specialized Claude Code agents that handle complex, multi-step tas
 ### Data Flow Between Agents
 
 ```
-requirement-parser ──> spec-generator ──> config-generator ──> pipeline-generator
-                                                          └──> infra-agent
-                                                          └──> qa-agent
+requirement-parser --> spec-generator --> config-generator --> pipeline-generator
+                                                          |-> infra-agent
+                                                          |-> qa-agent
 ```
 
 Each agent writes its output to `artifacts/{run_id}/` with a numbered prefix (01-06) so the next agent can pick it up.
 
 ---
 
-## 12. Hooks and Guardrails
+## 11. Hooks and Guardrails
 
-Five hooks enforce safety constraints automatically. They fire during Claude Code operations without manual intervention.
+Two hooks are registered in `.claude/settings.json` and fire automatically during Claude Code operations:
 
 | Hook | Event | What It Does |
 |------|-------|-------------|
-| **pre-config-validation.sh** | Before Write/Edit on YAML | Blocks Snowflake write operations (INSERT, MERGE, UPDATE, DELETE, CREATE TABLE, DROP TABLE, ALTER TABLE, TRUNCATE) |
-| **pre-deploy-terraform-plan.sh** | Before `terraform apply` | Runs `terraform plan` first; blocks if plan includes resource destruction |
-| **post-codegen-lint.sh** | After Write/Edit on .py files | Runs flake8 (style) and bandit (security scan) |
-| **post-codegen-docker-lint.sh** | After Write/Edit on Dockerfile | Runs hadolint (Dockerfile best practices) |
-| **post-deploy-recon.sh** | On session Stop | Invokes reconciliation Lambda; blocks if checks fail |
+| **Config DML guard** | Before Write/Edit on YAML files | Blocks if config content contains DML/DDL keywords (INSERT, UPDATE, DELETE, MERGE, DROP, ALTER, TRUNCATE). Snowflake is READ-ONLY. |
+| **Python linter** | After Write/Edit on .py files | Runs flake8 with `--max-line-length=120 --ignore=E501,W503`. Advisory only -- does not block. |
 
 **Hook exit codes:**
 - `exit 0` = allow the operation
-- `exit 2` = block the operation (PreToolUse hooks) or report advisory (PostToolUse hooks)
+- `exit 2` = block the operation (PreToolUse) or report advisory (PostToolUse)
 
-You do not need to run these manually. They are registered in `.claude/settings.json` and fire automatically.
+Additional guardrails are built into the skills and agents themselves:
+- `/validate-config` performs 12 semantic checks including DML/DDL scanning
+- `/validate-connection` blocks non-OAuth auth, write-capable roles, and missing proxy
+- The infra-agent never auto-applies Terraform to production
+- The pipeline-generator runs flake8 + bandit with auto-fix loops
 
 ---
 
-## 13. CI/CD Workflow
+## 12. CI/CD Workflow
+
+CI/CD pipeline definitions are generated as part of the infrastructure. The framework mandates:
 
 ### Jenkins (CI -- Build Stage)
 
-The `Jenkinsfile` defines the build pipeline:
-
+Jenkins handles the build pipeline with these stages:
 1. **Checkout** -- Clone the repository
-2. **Validate Config** -- Schema validation via `scripts/validate_config.py`
+2. **Validate Config** -- Schema validation via `/validate-config`
 3. **Lint** (parallel) -- flake8 (style) + bandit (security)
 4. **Unit Test** -- pytest with JUnit reporting
 5. **Terraform Validate** -- `terraform fmt -check` + `terraform validate` per environment
@@ -656,7 +595,7 @@ The `Jenkinsfile` defines the build pipeline:
 
 ### Harness (CD -- Deploy Stage)
 
-The `harness/pipeline.yaml` defines a 3-stage deployment:
+Harness handles a 3-stage deployment:
 
 | Stage | Environment | Approval | What Happens |
 |-------|------------|----------|-------------|
@@ -668,42 +607,43 @@ Each stage includes a rollback step if deployment fails.
 
 ---
 
-## 14. Governance Artifacts
+## 13. Generated Artifacts
 
-### Data Contract
+When you run the full AI SDLC pipeline, these artifacts are produced:
 
-Generated from your pipeline config:
+### Per-Run Artifacts (`artifacts/{run_id}/`)
 
-```bash
-python governance/generate_data_contract.py --config configs/my_product.yaml
-```
+| File | Producer | Content |
+|------|----------|---------|
+| `01-requirements.json` | requirement-parser | Structured requirements from Jira |
+| `02-spec.json` | spec-generator | Technical spec with production-ready SQL |
+| `03-config.yaml` | config-generator | Validated pipeline config YAML |
+| `04-code/` | pipeline-generator | Generated pipeline code and tests |
+| `05-infra-state/` | infra-agent | Terraform plan output, apply results, or PR details |
+| `06-validation-report.json` | qa-agent | Reconciliation and data quality results |
 
-Produces a data contract YAML with:
-- Product identity and ownership
-- Schema definition (column-level)
-- SLA guarantees (freshness, availability, latency)
-- Quality thresholds
-- Source lineage and column mappings
+### Pipeline Code (`pipelines/`)
 
-### Static Lineage
+| Directory | Content | Generated by |
+|-----------|---------|-------------|
+| `generic/{engine}/` | Shared pipeline code (5+ files per engine) | `/generate-pipeline` |
+| `{product}/step_functions/` | Step Function ASL JSON | `/generate-step-function` |
+| `{product}/tests/` | pytest test stubs | pipeline-generator agent |
 
-```bash
-python governance/lineage/static_lineage.py --config configs/my_product.yaml
-```
+### Infrastructure (`terraform/`)
 
-Generates a lineage document tracing data flow from Snowflake sources through transformations to the Iceberg target, including column-level mappings.
-
-### CloudWatch Dashboard
-
-A template at `governance/templates/cloudwatch_dashboard.json` provides monitoring widgets for:
-- Job execution status
-- Duration trends
-- Error rates
-- SLA compliance
+| Directory | Content | Generated by |
+|-----------|---------|-------------|
+| `modules/iam/` | IAM execution role with least-privilege policies | `/generate-terraform` |
+| `modules/step_function/` | State machine resource | `/generate-terraform` |
+| `modules/reconciliation_lambda/` | Reconciliation Lambda | `/generate-terraform` |
+| `modules/monitoring/` | CloudWatch, SNS, EventBridge | `/generate-terraform` |
+| `modules/{engine}/` | Engine-specific resources (glue_job, emr, etl_lambda, ecs_task+ecr) | `/generate-terraform` |
+| `environments/{env}/` | Per-environment main.tf, variables.tf, terraform.tfvars | infra-agent |
 
 ---
 
-## 15. Troubleshooting
+## 14. Troubleshooting
 
 ### Config Validation Fails
 
@@ -717,6 +657,7 @@ Common issues:
 - **Wrong authenticator** -- Must be `oauth` (not `externalbrowser` or `snowflake`)
 - **Missing reconciliation rules** -- At least 1 rule is mandatory
 - **Invalid s3_path** -- Must start with `s3://`
+- **DML/DDL in query.sql** -- Only SELECT/WITH queries allowed (Snowflake is read-only)
 
 ### Connection Validation Fails
 
@@ -732,9 +673,10 @@ Common issues:
 
 ### Terraform Plan Shows Destruction
 
-The `pre-deploy-terraform-plan.sh` hook blocks `terraform apply` if the plan includes resource destruction. Review the plan output and either:
+The infra-agent blocks `terraform apply` if the plan includes resource destruction in non-prod.
+For production, all changes go through a GitHub PR for manual review. Review the plan output and either:
 - Adjust your config to avoid destruction
-- Manually approve if destruction is intentional
+- Approve the PR if destruction is intentional
 
 ### Reconciliation Fails
 
@@ -745,30 +687,28 @@ Check the validation report in `artifacts/{run_id}/06-validation-report.json`. C
 
 ### Tests Fail
 
-```bash
-# Run tests locally
-pytest tests/ -v
+The pipeline-generator agent creates test stubs at `pipelines/{product}/tests/`. Run them with:
 
-# Run specific test
-pytest tests/monthly_revenue_by_category/test_etl.py -v
+```bash
+pytest pipelines/{product}/tests/ -v
 ```
 
 Tests use `moto` for AWS mocking and `local[*]` SparkSession. No real AWS credentials or Snowflake connections are needed.
 
 ---
 
-## 16. Security Model
+## 15. Security Model
 
-### Hard Constraints (Enforced by CLAUDE.md and Hooks)
+### Hard Constraints (Enforced by CLAUDE.md, Hooks, and Skills)
 
 | Constraint | Enforcement |
 |------------|-------------|
-| Snowflake is read-only | Hook blocks INSERT/UPDATE/DELETE/MERGE; role naming convention enforced |
-| OAuth only for Snowflake | Config schema enforces `authenticator: oauth`; connection validation checks |
-| No hardcoded secrets | Templates retrieve from Secrets Manager; hooks and code review catch violations |
-| Least-privilege IAM | Terraform IAM module scopes policies to specific resources |
-| Prod requires 2 approvals | Harness pipeline enforces dual approval from different user groups |
-| No auto-apply in prod | Infra agent creates PR instead of applying directly |
+| Snowflake is read-only | Hook blocks DML/DDL in YAML; `/validate-config` scans query.sql; role naming enforced by `/validate-connection` |
+| OAuth only for Snowflake | Config schema enforces `authenticator: oauth`; `/validate-connection` blocks alternatives |
+| No hardcoded secrets | Generated code retrieves from Secrets Manager at runtime; CLAUDE.md hard constraint |
+| Least-privilege IAM | `/generate-terraform` scopes IAM policies to specific resources (no wildcards on Secrets Manager) |
+| Prod requires 2 approvals | Harness CD pipeline enforces dual approval from different user groups |
+| No auto-apply in prod | Infra agent creates GitHub PR instead of applying directly |
 
 ### Secrets Management
 
@@ -788,53 +728,9 @@ proxy:
 
 ---
 
-## 17. Review Summary
-
-This section summarizes the quality review of all framework deliverables.
-
-### Epic-by-Epic Assessment
-
-| Epic | Deliverables | Status | Grade |
-|------|-------------|--------|-------|
-| **1. Foundation & Guardrails** | init script, config schema, example config, 5 hooks, settings | Complete | A |
-| **2. Claude Code Skills** | 9 skill definitions (SKILL.md files) | Complete | A+ |
-| **3. Code Templates** | 11 template files (PySpark, Python, Dockerfile, common) | Complete | A+ |
-| **4. Subagents** | 6 agent definitions (AGENT.md files) | Complete | A+ |
-| **5. Terraform Modules** | 8 modules + 3 environment configs + backend configs | Complete | A+ |
-| **6. CI/CD Pipelines** | Jenkinsfile + Harness pipeline YAML | Complete | A+ |
-| **7. Testing & Scripts** | pytest framework + 5 utility scripts | Complete | A |
-| **8. Governance** | Data contracts, lineage, dashboard templates, CLAUDE.md | Complete | A |
-
-### Key Quality Highlights
-
-- **Config Schema** -- Validates all 7 sections with engine-specific conditional requirements for Glue, EMR, Lambda, and ECS
-- **Skills** -- All 9 skills have correct YAML frontmatter, engine-specific instructions, and proper output path conventions
-- **Templates** -- All 11 templates enforce OAuth-only auth, structured logging with correlation IDs, parameterized SQL, and Iceberg format-version 2
-- **Subagents** -- All 6 agents have proper MCP integration, error handling with retry/auto-fix loops, and structured artifact handoff
-- **Terraform** -- Least-privilege IAM, conditional module instantiation by engine, encrypted S3 backend with DynamoDB locking
-- **CI/CD** -- Jenkins parallel lint stages, Harness 3-stage deployment with escalating approvals (0 -> 1 -> 2)
-- **Testing** -- Comprehensive ETL logic tests, reconciliation framework tests, and end-to-end integration tests using moto and local SparkSession
-- **Hooks** -- All 5 hooks follow Claude Code standard (JSON stdin, exit 0/2), with graceful degradation for missing tools
-
-### Naming Convention
-
-All resources follow: `adp-{domain}-{product}-{env}[-{suffix}]`
-
-| Resource | Example |
-|----------|---------|
-| S3 bucket | `sales-analytics-adp-prod` |
-| Glue job | `adp-sales_analytics-monthly_revenue-prod` |
-| Step Function | `adp-sales_analytics-monthly_revenue-prod` |
-| IAM role | `adp-glue-sales_analytics-monthly_revenue-prod` |
-| CloudWatch log group | `/adp/sales_analytics/monthly_revenue/prod` |
-
----
-
 ## Getting Help
 
-- Review the example config: `configs/monthly_revenue_by_category.yaml`
-- Read the full architecture: `AI_SDLC_Plan.md`
-- Read the implementation stories: `AI_SDLC_Stories.md`
-- Check CLAUDE.md for hard constraints and coding standards
+- Check `CLAUDE.md` for hard constraints and coding standards
 - Run `/validate-config` and `/validate-connection` before code generation
-- Use `pytest tests/ -v` to run the test suite locally
+- Use the minimum viable config example in Section 6 as a starting point
+- Run the full pipeline from a Jira ticket: "Run the full AI SDLC pipeline for SCRUM-123"
