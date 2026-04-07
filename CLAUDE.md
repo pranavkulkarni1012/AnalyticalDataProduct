@@ -109,6 +109,18 @@ All resource names follow the pattern: `adp-{domain}-{product}-{env}[-{suffix}]`
 - **MUST NOT** put transformation logic in pipeline code -- pipeline code is generic and shared.
 - Pipeline code validates SQL does not contain DML/DDL keywords before execution (defense-in-depth).
 
+### Environment (ENV)
+- **MUST** accept an `ENV` argument in every pipeline (values: `DEV`, `TEST`, `PROD`).
+- **MUST** default `ENV` to `DEV` when running locally or when not explicitly set.
+- Terraform sets `ENV` on compute resources during deployment -- the value matches the target environment.
+- Pipeline code reads `ENV` at startup and logs it. Future use: environment-specific proxy, Snowflake account/warehouse/role, logging level, etc.
+- ENV propagation per engine:
+  - Step Function: `$.env` in execution input (defaults to `dev` if absent)
+  - Glue: `--ENV` job argument (via `getResolvedOptions`)
+  - EMR: `--env` argparse argument
+  - Lambda: `event["env"]` or `ENV` environment variable on the function
+  - ECS: `ENV` environment variable on the container (set in task definition)
+
 ### Runtime Parameters
 - **MUST** declare runtime parameters in the optional `parameters` section of the config YAML.
 - Each parameter has: `name`, `type` (string/date/integer/number/boolean), `description`, and optional `default`.

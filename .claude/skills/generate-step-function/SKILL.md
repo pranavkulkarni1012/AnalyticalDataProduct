@@ -31,7 +31,7 @@ first.
 1. Read the pipeline config YAML from `$ARGUMENTS` or `configs/` directory.
 2. Extract `compute.engine`, `product.name`, `product.domain`.
 3. Derive naming conventions:
-   - Job name: `adp-{product.domain}-{product.name}-etl-{env}` (where `{env}` is passed via execution input `$.env`, defaulting to `prod`)
+   - Job name: `adp-{product.domain}-{product.name}-etl-{env}` (where `{env}` is passed via execution input `$.env`, defaulting to `dev`)
    - Recon Lambda: `adp-{product.name}-recon-{env}`
    - SNS topic: Read from `notifications.sns_topic_arn` in the config if present.
      If absent, use `adp-{product.name}-alerts-{env}` as the topic name and construct

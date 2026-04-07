@@ -23,6 +23,9 @@ This skill is invoked by `/generate-pipeline` when `compute.engine` is `lambda`.
 
 - The generic Lambda pipeline is a handler that reads a config path from the event payload
 - At runtime, `event["config_path"]` points to the product-specific config YAML (S3 path)
+- It reads `event["env"]`, defaulting to `os.environ.get("ENV", "DEV")` if not in the event.
+  Logs the environment at startup. Terraform sets the `ENV` environment variable on the
+  Lambda function configuration (see `/generate-terraform`).
 - It downloads the config, executes `query.sql` against Snowflake, writes to Iceberg
 - One generic Lambda function serves ALL Lambda-based data products
 - The config YAML (with `query.sql`) is the only product-specific artifact
