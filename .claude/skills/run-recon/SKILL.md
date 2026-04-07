@@ -125,6 +125,10 @@ resolved_source_expr = substitute_parameters(
 ```
 Use `resolved_source_expr` instead of `rule["source_expr"]` in all source query executions.
 
+When `param_definitions` is empty or `None` (no `parameters` section in config),
+`substitute_parameters()` returns the SQL unchanged. This makes it safe to call
+unconditionally -- datasets without runtime parameters work identically to before.
+
 #### Rule Processing
 
 For each rule in `reconciliation.rules`, generate a check block based on `type`:

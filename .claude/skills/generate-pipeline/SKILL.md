@@ -181,8 +181,32 @@ def _format_value(name, value, param_type):
         raise ValueError(f"Unknown parameter type '{param_type}' for parameter '{name}'")
 ```
 
-The boilerplate must call `substitute_parameters()` on both `query.sql` and each
-reconciliation rule's `source_expr` before executing them against Snowflake.
+The boilerplate must handle parameter substitution as follows:
+```python
+from parameter_utils import substitute_parameters
+
+# Read parameter definitions from config (empty list if section absent)
+param_definitions = config.get("parameters", [])
+
+# Read runtime parameter values from engine-specific input (empty dict if not provided)
+# Glue: json.loads(args.get("--parameters", "{}"))
+# EMR/ECS: json.loads(args.parameters) if args.parameters else {}
+# Lambda: event.get("parameters", {})
+runtime_parameters = ...  # engine-specific
+
+# Substitute -- safe no-op when param_definitions is empty (no parameters declared)
+resolved_sql = substitute_parameters(config["query"]["sql"], runtime_parameters, param_definitions)
+
+# Also apply to reconciliation source_expr
+for rule in config.get("reconciliation", {}).get("rules", []):
+    rule["source_expr"] = substitute_parameters(
+        rule["source_expr"], runtime_parameters, param_definitions
+    )
+```
+
+When `param_definitions` is an empty list (no `parameters` section in config),
+`substitute_parameters()` returns the SQL unchanged -- no placeholders to replace,
+no parameters to validate. This makes it safe to call unconditionally.
 
 The generic Glue pipeline must:
 - Use `GlueContext`, `Job.init()`/`Job.commit()`, and `getResolvedOptions`
