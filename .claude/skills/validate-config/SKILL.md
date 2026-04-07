@@ -32,15 +32,164 @@ the first failure).
 
 ### Step 2: JSON Schema Validation
 
-Run the config against `schemas/pipeline_config_schema.json` using this command:
+Validate the config against the pipeline config JSON Schema (Draft 7). The schema
+is embedded below -- write it to a temporary file if needed for programmatic validation.
 
 ```bash
 python3 -c "
-import json, yaml, sys
+import json, yaml, sys, tempfile, os
 from jsonschema import Draft7Validator
 
-with open('schemas/pipeline_config_schema.json') as f:
-    schema = json.load(f)
+schema = {
+  '\$schema': 'http://json-schema.org/draft-07/schema#',
+  'title': 'Analytical Data Product Pipeline Configuration',
+  'type': 'object',
+  'required': ['product', 'compute', 'source', 'query', 'target', 'reconciliation', 'runtime'],
+  'additionalProperties': False,
+  'properties': {
+    'product': {
+      'type': 'object', 'required': ['name', 'domain', 'owner', 'version', 'description'],
+      'additionalProperties': False,
+      'properties': {
+        'name': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{2,50}\$'},
+        'domain': {'type': 'string'},
+        'owner': {'type': 'string', 'format': 'email'},
+        'version': {'type': 'string', 'pattern': '^\\\\d+\\\\.\\\\d+\\\\.\\\\d+\$'},
+        'description': {'type': 'string'},
+        'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'schedule': {'type': 'object', 'additionalProperties': False, 'properties': {
+          'frequency': {'type': 'string', 'enum': ['hourly', 'daily', 'weekly', 'monthly']},
+          'cron': {'type': 'string'}
+        }}
+      }
+    },
+    'compute': {
+      'type': 'object', 'required': ['engine'], 'additionalProperties': False,
+      'properties': {
+        'engine': {'type': 'string', 'enum': ['glue', 'emr', 'lambda', 'ecs']},
+        'language': {'type': 'string', 'enum': ['pyspark', 'python']},
+        'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'schedule': {'type': 'object', 'additionalProperties': False, 'properties': {
+          'frequency': {'type': 'string', 'enum': ['hourly', 'daily', 'weekly', 'monthly']},
+          'cron': {'type': 'string'}
+        }}
+      }
+    },
+    'source': {
+      'type': 'object', 'required': ['type', 'connection'], 'additionalProperties': False,
+      'properties': {
+        'type': {'type': 'string', 'enum': ['snowflake']},
+        'connection': {
+          'type': 'object', 'required': ['account', 'warehouse', 'role', 'authenticator'],
+          'additionalProperties': False,
+          'properties': {
+            'account': {'type': 'string'}, 'warehouse': {'type': 'string'},
+            'role': {'type': 'string'}, 'authenticator': {'type': 'string', 'enum': ['oauth']},
+            'proxy': {'type': 'object', 'required': ['http_proxy', 'https_proxy'],
+              'additionalProperties': False,
+              'properties': {'http_proxy': {'type': 'string'}, 'https_proxy': {'type': 'string'}}
+            }
+          }
+        }
+      }
+    },
+    'query': {
+      'type': 'object', 'required': ['sql'], 'additionalProperties': False,
+      'properties': {
+        'sql': {'type': 'string', 'minLength': 10},
+        'description': {'type': 'string'},
+        'parameters': {'type': 'object', 'additionalProperties': {'type': 'string'}}
+      }
+    },
+    'target': {
+      'type': 'object', 'required': ['catalog', 'database', 'table', 's3_path', 'format', 'write_mode'],
+      'additionalProperties': False,
+      'properties': {
+        'catalog': {'type': 'string', 'const': 'glue_catalog'},
+        'database': {'type': 'string'}, 'table': {'type': 'string'},
+        's3_path': {'type': 'string', 'pattern': '^s3://'},
+        'format': {'type': 'string', 'const': 'iceberg'},
+        'write_mode': {'type': 'string', 'enum': ['append', 'overwrite']},
+        'partition_by': {'type': 'array', 'items': {'type': 'string'}},
+        'sort_order': {'type': 'array', 'items': {'type': 'string'}},
+        'table_properties': {'type': 'object', 'additionalProperties': {'type': 'string'}}
+      }
+    },
+    'reconciliation': {
+      'type': 'object', 'required': ['rules'], 'additionalProperties': False,
+      'properties': {
+        'enabled': {'type': 'boolean', 'default': True},
+        'rules': {'type': 'array', 'minItems': 1, 'items': {
+          'type': 'object', 'required': ['name', 'type', 'source_expr', 'target_expr', 'tolerance_pct'],
+          'additionalProperties': False,
+          'properties': {
+            'name': {'type': 'string'},
+            'type': {'type': 'string', 'enum': ['row_count', 'sum', 'distinct_count', 'null_check']},
+            'source_expr': {'type': 'string'}, 'target_expr': {'type': 'string'},
+            'tolerance_pct': {'type': 'number', 'minimum': 0, 'maximum': 100}
+          }
+        }}
+      }
+    },
+    'data_quality': {
+      'type': 'object', 'additionalProperties': False,
+      'properties': {
+        'checks': {'type': 'array', 'items': {
+          'type': 'object', 'required': ['name', 'type', 'column'], 'additionalProperties': False,
+          'properties': {
+            'name': {'type': 'string'},
+            'type': {'type': 'string', 'enum': ['not_null', 'unique', 'range', 'regex', 'custom']},
+            'column': {'type': 'string'},
+            'parameters': {'type': 'object'}
+          }
+        }},
+        'sla_minutes': {'type': 'integer', 'minimum': 1, 'description': 'SLA for pipeline completion in minutes'}
+      }
+    },
+    'runtime': {
+      'type': 'object', 'required': ['timeout_minutes'],
+      'properties': {
+        'timeout_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 2880},
+        'max_concurrent_runs': {'type': 'integer', 'default': 1},
+        'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'glue_version': {'type': 'string', 'enum': ['4.0']},
+        'worker_type': {'type': 'string', 'enum': ['G.1X', 'G.2X', 'G.4X', 'G.8X', 'Z.2X']},
+        'num_workers': {'type': 'integer', 'minimum': 2, 'maximum': 100},
+        'extra_py_files': {'type': 'array', 'items': {'type': 'string'}},
+        'extra_jars': {'type': 'array', 'items': {'type': 'string'}},
+        'job_parameters': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'emr_release': {'type': 'string', 'pattern': '^emr-\\\\d+\\\\.\\\\d+\\\\.\\\\d+\$'},
+        'emr_mode': {'type': 'string', 'enum': ['serverless', 'ec2'], 'default': 'serverless'},
+        'emr_application_id': {'type': 'string'},
+        'instance_type': {'type': 'string'},
+        'instance_count': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+        'spark_submit_parameters': {'type': 'string'},
+        'lambda_memory_mb': {'type': 'integer', 'minimum': 128, 'maximum': 10240},
+        'lambda_timeout_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 900},
+        'python_runtime': {'type': 'string', 'enum': ['python3.11', 'python3.12'], 'default': 'python3.11'},
+        'lambda_layers': {'type': 'array', 'items': {'type': 'string'}},
+        'lambda_package_type': {'type': 'string', 'enum': ['zip', 'image'], 'default': 'zip'},
+        'ecs_cpu': {'type': 'integer', 'enum': [256, 512, 1024, 2048, 4096]},
+        'ecs_memory': {'type': 'integer', 'minimum': 512, 'maximum': 30720},
+        'container_image': {'type': 'string'},
+        'ecs_task_role': {'type': 'string'},
+        'ecs_cluster': {'type': 'string'},
+        'ecr_registry': {'type': 'string', 'description': 'ECR registry URL for ECS container images'}
+      }
+    }
+  },
+  'allOf': [
+    {'if': {'properties': {'compute': {'properties': {'engine': {'const': 'glue'}}}}},
+     'then': {'properties': {'runtime': {'required': ['timeout_minutes', 'glue_version', 'worker_type', 'num_workers']}}}},
+    {'if': {'properties': {'compute': {'properties': {'engine': {'const': 'emr'}}}}},
+     'then': {'properties': {'runtime': {'required': ['timeout_minutes', 'emr_release', 'emr_mode']}}}},
+    {'if': {'properties': {'compute': {'properties': {'engine': {'const': 'lambda'}}}}},
+     'then': {'properties': {'runtime': {'required': ['timeout_minutes', 'lambda_memory_mb', 'lambda_timeout_seconds']}}}},
+    {'if': {'properties': {'compute': {'properties': {'engine': {'const': 'ecs'}}}}},
+     'then': {'properties': {'runtime': {'required': ['timeout_minutes', 'ecs_cpu', 'ecs_memory']}}}}
+  ]
+}
+
 with open(sys.argv[1]) as f:
     config = yaml.safe_load(f)
 
@@ -129,6 +278,8 @@ Validate the `query` section:
 3. `target.format` is `iceberg` (if specified).
 4. `target.write_mode` is one of: `append`, `overwrite`.
 5. `target.database` and `target.table` are non-empty.
+6. If `target.table_properties` is present and contains `format-version`, verify it is `"2"`.
+   If `target.table_properties` does not contain `format-version`, warn that Iceberg format-version 2 is required.
 
 ### Step 9: Reconciliation Validation
 

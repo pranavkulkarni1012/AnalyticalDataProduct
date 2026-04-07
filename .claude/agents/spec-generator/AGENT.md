@@ -61,12 +61,16 @@ Define a single source connection object (shared by all source tables referenced
    - Sort order: Use the primary metric column descending
 
 ### Step 5: Determine Compute Configuration
-1. **Glue job config** (default unless overridden by requirements):
-   - Worker type: `G.2X` (default for most workloads)
-   - Worker count: 10 (baseline, scale based on estimated data volume)
-   - Timeout: 120 minutes
-   - Glue version: `4.0`
-   - Python version: `3`
+1. **Engine selection**: Determine the compute engine from requirements context:
+   - Default to `glue` unless the requirements specify otherwise
+   - Use `lambda` if data volume is < 1GB and runtime < 15 minutes
+   - Use `ecs` if Python workload exceeds Lambda limits but doesn't need Spark
+   - Use `emr` only if Glue worker types are insufficient or GPU is needed
+2. **Engine-specific defaults** (apply based on selected engine):
+   - **Glue**: worker_type `G.2X`, num_workers 10, timeout 120 min, glue_version `4.0`
+   - **EMR**: emr_release `emr-6.15.0`, emr_mode `serverless`, timeout 180 min
+   - **Lambda**: lambda_memory_mb 3008, lambda_timeout_seconds 900, timeout 15 min
+   - **ECS**: ecs_cpu 2048, ecs_memory 4096, timeout 240 min
 
 ### Step 6: Define Reconciliation Rules
 
@@ -112,11 +116,13 @@ Write `02-spec.json` with the following structure:
     "sort_order": [{"column": "string", "direction": "asc|desc"}]
   },
   "compute": {
-    "engine": "glue",
-    "language": "pyspark",
-    "worker_type": "G.2X",
-    "worker_count": 10,
+    "engine": "glue|emr|lambda|ecs",
+    "language": "pyspark|python"
+  },
+  "runtime": {
     "timeout_minutes": 120,
+    "num_workers": 10,
+    "worker_type": "G.2X",
     "glue_version": "4.0"
   },
   "schedule": {

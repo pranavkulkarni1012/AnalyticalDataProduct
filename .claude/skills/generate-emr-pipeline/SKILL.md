@@ -1,6 +1,6 @@
 ---
 name: generate-emr-pipeline
-description: Deploys the generic EMR PySpark pipeline by copying templates and shared modules to pipelines/generic/emr/. Use when compute.engine is emr.
+description: Generates the generic EMR PySpark pipeline with shared modules in pipelines/generic/emr/. Use when compute.engine is emr.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -8,8 +8,8 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-emr-pipeline
 
 ## Description
-Deploys the generic EMR PySpark pipeline by copying template files and shared modules
-to `pipelines/generic/emr/`. Pipeline code is GENERIC and SHARED -- this skill does NOT
+Generates the generic EMR PySpark pipeline code and writes it to
+`pipelines/generic/emr/`. Pipeline code is GENERIC and SHARED -- this skill does NOT
 generate per-product code. The generic pipeline reads a config YAML at runtime (passed
 via `--config-path` argument) to determine source connection, query SQL, target table,
 and reconciliation rules.
@@ -49,18 +49,18 @@ run both validators first.
    `reconciliation`, `runtime` sections.
 3. Verify `compute.engine` is `emr`.
 
-### Step 2: Deploy Generic EMR Pipeline
+### Step 2: Generate Generic EMR Pipeline
 
-Copy the following files from `templates/` to `pipelines/generic/emr/`:
+Generate the following files in `pipelines/generic/emr/`:
 
-1. `templates/pyspark/emr_job_boilerplate.py` -> `pipelines/generic/emr/emr_job_boilerplate.py`
-2. `templates/pyspark/snowflake_reader_spark.py` -> `pipelines/generic/emr/snowflake_reader_spark.py`
-3. `templates/pyspark/iceberg_writer_spark.py` -> `pipelines/generic/emr/iceberg_writer_spark.py`
-4. `templates/common/reconciliation.py` -> `pipelines/generic/emr/reconciliation.py`
-5. `templates/common/data_quality.py` -> `pipelines/generic/emr/data_quality.py`
+1. `emr_job_boilerplate.py` -- Generic EMR entrypoint using SparkSession (not GlueContext)
+2. `snowflake_reader_spark.py` -- Snowflake Spark connector reader module
+3. `iceberg_writer_spark.py` -- Iceberg writer using Spark `df.writeTo()`
+4. `reconciliation.py` -- Shared reconciliation logic (PySpark variant)
+5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
 
 Create the `pipelines/generic/emr/` directory if it does not exist. If it already
-exists, overwrite with the latest templates.
+exists, overwrite with the latest code.
 
 ### Step 3: Verify Generic Pipeline Content
 

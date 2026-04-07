@@ -1,6 +1,6 @@
 ---
 name: generate-ecs-pipeline
-description: Deploys the generic ECS Fargate Python+Pandas pipeline by copying templates, Dockerfile, and shared modules to pipelines/generic/ecs/. Use when compute.engine is ecs.
+description: Generates the generic ECS Fargate Python+Pandas pipeline with Dockerfile and shared modules in pipelines/generic/ecs/. Use when compute.engine is ecs.
 argument-hint: "[config-path]"
 allowed-tools: Read Grep Glob Write Bash
 ---
@@ -8,14 +8,14 @@ allowed-tools: Read Grep Glob Write Bash
 # Skill: generate-ecs-pipeline
 
 ## Description
-Deploys the generic ECS Fargate Python+Pandas pipeline by copying template files,
-Dockerfile, and shared modules to `pipelines/generic/ecs/`. Pipeline code is GENERIC
-and SHARED -- this skill does NOT generate per-product code. The generic pipeline reads
-a config YAML at runtime (passed via `--config-path` argument) to determine source
-connection, query SQL, target table, and reconciliation rules.
+Generates the generic ECS Fargate Python+Pandas pipeline code and writes it to
+`pipelines/generic/ecs/`. Pipeline code is GENERIC and SHARED -- this skill does NOT
+generate per-product code. The generic pipeline reads a config YAML at runtime (passed
+via `--config-path` argument) to determine source connection, query SQL, target table,
+and reconciliation rules.
 
-Uses the same Python+Pandas pattern as Lambda (shared `snowflake_reader_pandas.py`,
-`iceberg_writer_pyiceberg.py`) but runs as a Docker container with no timeout limit.
+Uses the same Python+Pandas pattern as Lambda (shared reader/writer modules) but runs
+as a Docker container with no timeout limit.
 
 This skill is invoked by `/generate-pipeline` when `compute.engine` is `ecs`.
 
@@ -35,7 +35,7 @@ run both validators first.
 ## Key Differences from Lambda
 - No timeout limit (unlike Lambda's 15 minutes).
 - Runs as a Docker container on ECS Fargate.
-- Entry point is a standalone Python script (`main.py`), not a Lambda handler.
+- Entry point is a standalone Python script (`ecs_entrypoint.py`), not a Lambda handler.
 - Includes a Dockerfile based on corporate base image from ECR.
 - Uses `sys.exit(0)`/`sys.exit(1)` for exit codes (not Lambda JSON returns).
 - Suitable for medium-to-large datasets that exceed Lambda limits.
@@ -53,23 +53,22 @@ run both validators first.
    `reconciliation`, `runtime` sections.
 3. Verify `compute.engine` is `ecs`.
 
-### Step 2: Deploy Generic ECS Pipeline
+### Step 2: Generate Generic ECS Pipeline
 
-Copy the following files from `templates/` to `pipelines/generic/ecs/`:
+Generate the following files in `pipelines/generic/ecs/`:
 
-1. `templates/python/ecs_entrypoint.py` -> `pipelines/generic/ecs/ecs_entrypoint.py`
-2. `templates/python/snowflake_reader_pandas.py` -> `pipelines/generic/ecs/snowflake_reader_pandas.py`
-3. `templates/python/iceberg_writer_pyiceberg.py` -> `pipelines/generic/ecs/iceberg_writer_pyiceberg.py`
-4. `templates/common/reconciliation.py` -> `pipelines/generic/ecs/reconciliation.py`
-5. `templates/common/data_quality.py` -> `pipelines/generic/ecs/data_quality.py`
+1. `ecs_entrypoint.py` -- Standalone Python entrypoint with argparse (`--config-path`, `--env`)
+2. `snowflake_reader_pandas.py` -- Snowflake DBAPI reader using `cursor.fetch_pandas_all()`
+3. `iceberg_writer_pyiceberg.py` -- PyIceberg writer using Glue Catalog
+4. `reconciliation.py` -- Shared reconciliation logic (Python+Pandas variant)
+5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
 
 Create the `pipelines/generic/ecs/` directory if it does not exist. If it already
-exists, overwrite with the latest templates.
+exists, overwrite with the latest code.
 
-### Step 3: Deploy Dockerfile
+### Step 3: Generate Dockerfile
 
-Copy or verify the Dockerfile from `templates/python/Dockerfile` to
-`pipelines/generic/ecs/Dockerfile`.
+Generate a Dockerfile at `pipelines/generic/ecs/Dockerfile`.
 
 The Dockerfile must meet corporate requirements:
 - Use corporate base image from ECR (not public Docker Hub).
@@ -81,13 +80,13 @@ The Dockerfile must meet corporate requirements:
   environment variable (set in the ECS task definition).
 - The entrypoint accepts `--config-path` as a runtime argument.
 
-Derive `{ecr_registry}` from `compute.ecr_registry` in the pipeline config.
+Derive `{ecr_registry}` from `runtime.ecr_registry` in the pipeline config.
 If absent, use placeholder `{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com`
 and emit a warning.
 
-### Step 4: Deploy requirements.txt
+### Step 4: Generate requirements.txt
 
-Copy or generate a `requirements.txt` at `pipelines/generic/ecs/requirements.txt`:
+Generate a `requirements.txt` at `pipelines/generic/ecs/requirements.txt`:
 
 ```
 snowflake-connector-python[pandas]>=3.0.0
@@ -173,7 +172,7 @@ Runtime Behavior:
   - Invokes reconciliation Lambda with rules from config
 
 Key Properties:
-  - Standalone main.py (not Lambda handler)
+  - Standalone ecs_entrypoint.py (not Lambda handler)
   - Docker container on ECS Fargate
   - No timeout limit
   - sys.exit() for exit codes

@@ -1,0 +1,21 @@
+# Generated at runtime by skills and agents -- not checked in
+artifacts/
+pipelines/
+terraform/
+configs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfvars
+!*.tfvars.example
+
+# OS
+.DS_Store
+Thumbs.db

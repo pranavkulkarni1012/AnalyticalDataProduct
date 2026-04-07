@@ -68,7 +68,7 @@ Generate the ASL JSON with the following states:
       "JobName": "{job_name}",
       "Arguments": {
         "--ENV.$": "$.env",
-        "--CONFIG_PATH.$": "$.config_s3_path",
+        "--config-path.$": "$.config_s3_path",
         "--JOB_NAME": "{job_name}"
       }
     }
@@ -88,7 +88,7 @@ Generate the ASL JSON with the following states:
     }
     ```
     Derive `{script_s3_path}` from `compute.script_s3_path` in the config.
-    If absent, construct as `s3://{target.s3_bucket}/scripts/{product.name}/`.
+    If absent, derive the bucket from `target.s3_path` (strip `s3://`, take the first path segment) and construct as `s3://{bucket}/scripts/{product.name}/`.
     For unresolvable infrastructure placeholders (`emr_application_id`,
     `execution_role_arn`), read from `runtime.*` config keys. If absent,
     emit the literal placeholder string and list each unresolved value in
@@ -112,7 +112,10 @@ Generate the ASL JSON with the following states:
       "Overrides": {
         "ContainerOverrides": [{
           "Name": "{product.name}-container",
-          "Command.$": "States.Array('python', '{product.name}_main.py', '--env', $.env, '--config-path', $.config_s3_path)"
+          "Command.$": "States.Array('python', 'ecs_entrypoint.py', '--env', $.env, '--config-path', $.config_s3_path)",
+          "Environment": [
+            {"Name": "CORRELATION_ID", "Value.$": "$.correlation_id"}
+          ]
         }]
       },
       "NetworkConfiguration": {

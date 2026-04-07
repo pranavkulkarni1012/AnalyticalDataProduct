@@ -29,12 +29,14 @@ and transition the Jira ticket based on the results.
    - Each rule has: `name`, `type` (row_count, sum, distinct_count, null_check),
      `source_expr`, `target_expr`, `tolerance_pct`
 3. Extract data quality checks from `data_quality.checks`:
-   - Each check has: `type` (not_null, unique, range, regex, custom),
-     `column`, `expression`, `threshold`
+   - Each check has: `name`, `type` (not_null, unique, range, regex, custom),
+     `column`, `parameters` (optional object with type-specific settings like `min`, `max`, `pattern`)
 4. Extract `product.name` and the Jira ticket key.
 
 ### Step 2: Run Reconciliation Checks
-1. Invoke `/run-recon` with the config path.
+1. Check if `reconciliation.enabled` is explicitly set to `false`. If so, skip
+   reconciliation checks and log: "Reconciliation disabled in config". Otherwise proceed.
+2. Invoke `/run-recon` with the config path.
 2. The skill generates reconciliation code that:
    - Executes `source_expr` against Snowflake (read-only) to get source metrics
    - Executes `target_expr` against the Iceberg table to get target metrics

@@ -36,14 +36,14 @@ to deploy the generic pipeline, generate orchestration, and produce test stubs.
 
 ### Step 2: Deploy Generic Pipeline
 1. Invoke `/generate-pipeline` with the config path.
-2. The skill checks if the generic pipeline for this engine already exists at
-   `pipelines/generic/{engine}/`. If it does, skip deployment (idempotent).
-3. If the generic pipeline does not exist, the skill copies templates and shared modules:
-   - Glue: `pipelines/generic/glue/etl.py` (reads config, executes SQL, writes Iceberg)
-   - EMR: `pipelines/generic/emr/etl.py`
-   - Lambda: `pipelines/generic/lambda/handler.py`
-   - ECS: `pipelines/generic/ecs/main.py` + `Dockerfile`
-4. The generic pipeline code:
+2. The skill generates the generic pipeline code from its specifications into
+   `pipelines/generic/{engine}/`. If the directory already exists, it is overwritten
+   with the latest generated code to ensure consistency:
+   - Glue: `pipelines/generic/glue/` (GlueContext-based ETL)
+   - EMR: `pipelines/generic/emr/` (SparkSession-based ETL)
+   - Lambda: `pipelines/generic/lambda/` (handler with pandas)
+   - ECS: `pipelines/generic/ecs/` (entrypoint + Dockerfile)
+3. The generic pipeline code:
    - Accepts a config path as input parameter
    - Reads the config YAML to get source connection, SQL query, and target details
    - Connects to Snowflake using OAuth (from the config's `source.connection`)
@@ -56,7 +56,7 @@ to deploy the generic pipeline, generate orchestration, and produce test stubs.
 2. The Step Function ASL JSON is written to:
    `pipelines/{product.name}/step_functions/{product.name}_orchestrator.asl.json`
 3. The ASL passes the config path (`configs/{product_name}.yaml`) to the generic pipeline:
-   - `glue` -> `arn:aws:states:::glue:startJobRun.sync` with `--config_path` argument
+   - `glue` -> `arn:aws:states:::glue:startJobRun.sync` with `--config-path` argument
    - `emr` -> `arn:aws:states:::elasticmapreduce:addStep.sync` with config path argument
    - `lambda` -> `arn:aws:states:::lambda:invoke` with config path in payload
    - `ecs` -> `arn:aws:states:::ecs:runTask.sync` with config path as environment variable
@@ -139,7 +139,7 @@ Run linting on the generic pipeline code (if newly deployed) and test stubs:
 ```
 attempt = 0
 max_attempts = 3
-generated_files = glob("pipelines/generic/{engine}/**/*.py") + glob("pipelines/{product.name}/tests/**/*.py")
+generated_files = Glob("pipelines/generic/{engine}/**/*.py") + Glob("pipelines/{product.name}/tests/**/*.py")
 
 while attempt < max_attempts:
     1. Run flake8 on all generated files:
@@ -185,5 +185,5 @@ After all generation steps complete, log a summary:
   Do NOT attempt to generate code manually -- the skills encode critical business logic.
 - **Lint auto-fix exhausted**: Log remaining errors as warnings. The generated code
   is functional; lint issues are cosmetic.
-- **Template not found**: If a referenced template file is missing, log a warning
-  and generate code without the template (the skills can generate code from config alone).
+- **Generation failure**: If a skill fails to generate code, log the error and report
+  which skill failed. The skills contain full specifications to generate code from scratch.

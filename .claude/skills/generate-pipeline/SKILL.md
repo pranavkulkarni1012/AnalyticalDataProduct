@@ -22,11 +22,12 @@ create the orchestration ASL that passes the config path to the generic pipeline
 
 ## Architecture
 
-- One generic pipeline per engine (Glue/EMR/Lambda/ECS) lives in `templates/`
+- One generic pipeline per engine (Glue/EMR/Lambda/ECS) is generated into `pipelines/generic/{engine}/`
 - Each data product gets its own config YAML in `configs/` with `query.sql` containing all transformation logic
 - The `source` section has connection info only (not per-table definitions)
 - Multiple data products = multiple configs, ONE shared pipeline codebase
 - No `{{ placeholder }}` code generation -- the config file IS the product-specific artifact
+- Skills contain all specifications to generate code from scratch -- no external template files needed
 
 ## Inputs
 - Pipeline config YAML path via `$ARGUMENTS`
@@ -71,26 +72,29 @@ create the orchestration ASL that passes the config path to the generic pipeline
 
 ### Step 5: Deploy Generic Pipeline
 
-Based on the value of `compute.engine`, deploy the generic pipeline by copying
-template files to `pipelines/generic/{engine}/`. If the generic pipeline directory
-already exists (from a previous deployment), update it with the latest templates.
+Based on the value of `compute.engine`, generate the generic pipeline code in
+`pipelines/generic/{engine}/`. If the generic pipeline directory already exists
+(from a previous run), overwrite with the latest generated code.
 
 #### Path A: `glue` (Inline Deployment)
 
-Copy the following files from `templates/` to `pipelines/generic/glue/`:
+Generate the following files in `pipelines/generic/glue/`:
 
-1. `templates/pyspark/glue_job_boilerplate.py` -> `pipelines/generic/glue/glue_job_boilerplate.py`
-2. `templates/pyspark/snowflake_reader_spark.py` -> `pipelines/generic/glue/snowflake_reader_spark.py`
-3. `templates/pyspark/iceberg_writer_spark.py` -> `pipelines/generic/glue/iceberg_writer_spark.py`
-4. `templates/common/reconciliation.py` -> `pipelines/generic/glue/reconciliation.py`
-5. `templates/common/data_quality.py` -> `pipelines/generic/glue/data_quality.py`
+1. `glue_job_boilerplate.py` -- Generic Glue ETL entrypoint using GlueContext
+2. `snowflake_reader_spark.py` -- Snowflake Spark connector reader module
+3. `iceberg_writer_spark.py` -- Iceberg writer using Spark `df.writeTo()`
+4. `reconciliation.py` -- Shared reconciliation logic (PySpark variant)
+5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
 
-The generic Glue pipeline:
-- Takes a `--config-path` argument (S3 path or local path to the YAML config)
-- Reads the config at runtime to determine source connection, query SQL, target table
-- Executes `query.sql` against Snowflake via the Spark Snowflake connector
-- Writes results to the Iceberg target defined in the config
-- Runs reconciliation checks defined in the config
+The generic Glue pipeline must:
+- Use `GlueContext`, `Job.init()`/`Job.commit()`, and `getResolvedOptions`
+- Take `--config-path` argument (S3 or local path to the YAML config)
+- Read the config at runtime to determine source connection, query SQL, target table
+- Execute `query.sql` against Snowflake via the Spark Snowflake connector
+- Write results to the Iceberg target defined in the config via `df.writeTo()`
+- Run reconciliation checks defined in the config
+- Use structured logging with correlation ID
+- Include top-level try/except with `exc_info=True` and re-raise
 
 #### Path B: `emr`
 

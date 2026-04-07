@@ -22,12 +22,6 @@ boto3 Lambda invocation for Lambda/ECS).
 - Pipeline config YAML path via `$ARGUMENTS`
 - If no path provided, scan the `configs/` directory for `.yaml` files
 
-## Templates
-Read these templates if available for boilerplate patterns. Generate code directly
-from config values regardless of whether templates exist.
-
-- `templates/common/reconciliation.py` -- shared reconciliation logic
-
 ## Output
 - Reconciliation module at `pipelines/{product.name}/recon/{product.name}_recon.py`
 

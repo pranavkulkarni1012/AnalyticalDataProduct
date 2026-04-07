@@ -19,20 +19,84 @@ field rather than structured transformation objects.
   `s3://adp-artifacts/{run_id}/02-spec.json` (S3).
 
 ## Skills Used
-- `/validate-config` -- validates the generated config against `schemas/pipeline_config_schema.json`
+- `/validate-config` -- validates the generated config against the schema embedded in the skill
 - `/validate-connection` -- validates Snowflake connection settings (OAuth, proxy, role)
 
 ## Process
 
-### Step 1: Read Spec and Schema
+### Step 1: Read Spec
 1. Read `02-spec.json`.
-2. Read `schemas/pipeline_config_schema.json` to understand the target config structure.
-3. Read an example config from `configs/` (if available) to understand the expected format.
+2. Use the config schema embedded in `/validate-config` skill for structure reference.
+3. Use the reference example below to understand the expected format.
 
 ### Step 2: Map Spec to Config YAML
 
 Map the spec fields to the pipeline config YAML schema. The config has these required
 top-level keys: `product`, `compute`, `source`, `query`, `target`, `reconciliation`, `runtime`.
+
+**Reference Example** (Glue engine):
+```yaml
+product:
+  name: monthly_revenue_by_category
+  domain: sales_analytics
+  owner: sales-analytics-team@company.com
+  version: "1.0.0"
+  description: >
+    Joins customer_orders and product_catalog from Snowflake,
+    aggregates monthly revenue by product category.
+  tags:
+    cost_center: "CC-1234"
+  schedule:
+    frequency: daily
+    cron: "0 6 * * *"
+compute:
+  engine: glue
+  language: pyspark
+source:
+  type: snowflake
+  connection:
+    account: company-prod.us-east-1
+    warehouse: ANALYTICS_WH
+    role: ADP_READER_ROLE
+    authenticator: oauth
+    proxy:
+      http_proxy: "http://corporate-proxy.company.com:8080"
+      https_proxy: "http://corporate-proxy.company.com:8080"
+query:
+  sql: |
+    WITH completed_orders AS (
+        SELECT o."order_id", o."product_id", o."order_date", o."total_amount"
+        FROM "PROD_DB"."SALES"."CUSTOMER_ORDERS" o
+        WHERE o."order_status" = 'COMPLETED'
+          AND o."order_date" >= DATEADD(month, -13, CURRENT_DATE())
+    )
+    SELECT p."category" AS product_category,
+           DATE_TRUNC('month', co."order_date") AS revenue_month,
+           SUM(co."total_amount") AS total_revenue
+    FROM completed_orders co
+    INNER JOIN "PROD_DB"."PRODUCTS"."PRODUCT_CATALOG" p ON co."product_id" = p."product_id"
+    GROUP BY p."category", DATE_TRUNC('month', co."order_date")
+target:
+  catalog: glue_catalog
+  database: sales_analytics_monthly_revenue_prod
+  table: monthly_revenue_by_category
+  s3_path: "s3://sales-analytics-adp-prod/monthly_revenue_by_category/data/"
+  format: iceberg
+  write_mode: overwrite
+  partition_by: [revenue_month]
+reconciliation:
+  rules:
+    - name: total_revenue_check
+      type: sum
+      source_expr: "SELECT SUM(\"total_amount\") FROM \"PROD_DB\".\"SALES\".\"CUSTOMER_ORDERS\" WHERE \"order_status\" = 'COMPLETED'"
+      target_expr: "SELECT SUM(total_revenue) FROM sales_analytics_monthly_revenue_prod.monthly_revenue_by_category"
+      tolerance_pct: 0.01
+runtime:
+  glue_version: "4.0"
+  worker_type: G.2X
+  num_workers: 10
+  timeout_minutes: 120
+```
 
 ```yaml
 product:
@@ -168,8 +232,8 @@ Write the validated `03-config.yaml` to:
 - Also write a copy to `configs/{product_name}.yaml` for the project repository.
 
 ## Error Handling
-- **Schema not found**: If `schemas/pipeline_config_schema.json` is missing, log an error
-  and generate the config based on example configs only.
+- **Schema validation**: The schema is embedded in the `/validate-config` skill.
+  If validation fails, use the reference example and skill specifications as guidance.
 - **Spec missing critical fields**: If `02-spec.json` lacks source or target, stop
   and report the error.
 - **Auto-fix exhausted**: After 3 failed fix attempts, output the config as-is with

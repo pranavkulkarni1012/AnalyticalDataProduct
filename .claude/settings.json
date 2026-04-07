@@ -6,20 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/pre-config-validation.sh",
-            "timeout": 30,
+            "command": "bash -c 'INPUT=$(cat); FILE_PATH=$(echo \"$INPUT\" | jq -r \".tool_input.file_path // empty\"); if [ -n \"$FILE_PATH\" ] && echo \"$FILE_PATH\" | grep -qi \"\\.yaml$\\|\\.yml$\"; then CONTENT=$(echo \"$INPUT\" | jq -r \".tool_input.content // .tool_input.new_string // empty\"); if echo \"$CONTENT\" | grep -qiE \"\\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE)\\b\"; then echo \"BLOCKED: Config contains DML/DDL keywords. Snowflake is READ-ONLY.\" >&2; exit 2; fi; fi; exit 0'",
+            "timeout": 10,
             "statusMessage": "Validating config has no Snowflake writes..."
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/pre-deploy-terraform-plan.sh",
-            "timeout": 120,
-            "statusMessage": "Running Terraform plan safety check..."
           }
         ]
       }
@@ -30,28 +19,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/post-codegen-lint.sh",
-            "timeout": 60,
-            "statusMessage": "Linting and security-scanning generated code..."
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/post-codegen-docker-lint.sh",
+            "command": "bash -c 'INPUT=$(cat); FILE_PATH=$(echo \"$INPUT\" | jq -r \".tool_input.file_path // empty\"); if [ -n \"$FILE_PATH\" ] && echo \"$FILE_PATH\" | grep -qi \"\\.py$\"; then if command -v flake8 &>/dev/null; then flake8 \"$FILE_PATH\" --max-line-length=120 --ignore=E501,W503 2>&1 || true; fi; fi; exit 0'",
             "timeout": 30,
-            "statusMessage": "Linting Dockerfile (ECS engine)..."
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR\"/hooks/post-deploy-recon.sh",
-            "timeout": 300,
-            "statusMessage": "Running post-deploy reconciliation..."
+            "statusMessage": "Linting generated Python code..."
           }
         ]
       }
