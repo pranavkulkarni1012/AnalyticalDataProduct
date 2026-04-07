@@ -1,6 +1,6 @@
 # AI SDLC: Analytical Data Product -- Producer Instructions
 
-**Version:** 2.0.0
+**Version:** 2.1.0
 **Last Updated:** 2026-04-07
 
 This document explains how a data product producer can use the AI SDLC framework to build, deploy, and operate an Analytical Data Product pipeline on AWS. It covers what to clone, what inputs to provide, how to interact with Claude Code, and what outputs to expect at each stage.
@@ -320,12 +320,14 @@ source:
 
 # ALL transformation logic lives here as SQL (CTEs, joins, aggregations)
 # No temp tables -- use CTEs instead. Fully-qualified table names required.
+# Use ${param_name} placeholders for runtime filter values.
 query:
   sql: |
     WITH filtered_data AS (
-        SELECT "id", "value", "created_date"
+        SELECT "id", "value", "created_date", "business_system_cd"
         FROM "PROD_DB"."MY_SCHEMA"."MY_TABLE"
-        WHERE "created_date" >= DATEADD(month, -12, CURRENT_DATE())
+        WHERE "created_date" = '${load_date}'
+          AND "business_system_cd" = '${business_system_cd}'
     )
     SELECT
         DATE_TRUNC('month', "created_date") AS created_month,
@@ -333,7 +335,19 @@ query:
         COUNT(*)                            AS record_count
     FROM filtered_data
     GROUP BY DATE_TRUNC('month', "created_date")
-  description: "Aggregates values by month from MY_TABLE"
+  description: "Aggregates values by month from MY_TABLE for a given load date and business system"
+
+# Runtime parameters -- filter values passed at execution time (optional section)
+# Each parameter declared here corresponds to a ${param_name} placeholder in query.sql
+parameters:
+  - name: load_date
+    type: date
+    description: "Load date to filter source data (YYYY-MM-DD)"
+    required: true
+  - name: business_system_cd
+    type: string
+    description: "Business system code to filter source data"
+    required: true
 
 target:
   catalog: glue_catalog
@@ -356,9 +370,10 @@ reconciliation:
     - name: row_count_check
       type: row_count
       source_expr: >
-        SELECT COUNT(DISTINCT DATE_TRUNC('month', "created_date"))
+        SELECT COUNT(*)
         FROM "PROD_DB"."MY_SCHEMA"."MY_TABLE"
-        WHERE "created_date" >= DATEADD(month, -12, CURRENT_DATE())
+        WHERE "created_date" = '${load_date}'
+          AND "business_system_cd" = '${business_system_cd}'
       target_expr: "SELECT COUNT(*) FROM my_domain_my_product_name_prod.my_product_name"
       tolerance_pct: 0.0
 
@@ -405,7 +420,72 @@ Before generating code, validate your config:
 | `target` | Iceberg table on Glue Catalog with S3 path | Yes |
 | `reconciliation` | Source-to-target validation rules (at least 1 rule) | Yes |
 | `runtime` | Engine-specific settings (timeout, workers, memory) | Yes |
+| `parameters` | Runtime filter parameters with `${param_name}` SQL placeholders | No |
 | `data_quality` | Column-level quality checks | No (recommended) |
+
+### Runtime Parameters (Optional)
+
+Use `parameters` when your pipeline needs to filter source data by values that change per run
+(e.g., a specific date, business system code, region). The column names in your SQL WHERE
+clause can be anything -- `load_dt`, `bucket_dt`, `as_of_date`, `business_system_cd`, etc.
+
+**How it works:**
+1. Declare parameters in the config YAML `parameters` section
+2. Use `${param_name}` placeholders in `query.sql` and reconciliation `source_expr`
+3. Pass parameter values at runtime (via Step Function input, Glue job args, Lambda event, etc.)
+4. The generic pipeline substitutes values safely (type-validated, SQL-escaped)
+
+**Parameter types:**
+
+| Type | Validation | SQL Output | Example |
+|------|-----------|------------|---------|
+| `string` | Any string, single-quotes escaped | `'JBP'` | `business_system_cd: JBP` |
+| `date` | Must match `YYYY-MM-DD` | `'2026-03-31'` | `load_date: 2026-03-31` |
+| `integer` | Must be a valid integer | `42` (no quotes) | `batch_id: 42` |
+| `number` | Must be a valid number | `3.14` (no quotes) | `threshold: 3.14` |
+| `boolean` | true/false/1/0/yes/no | `TRUE` or `FALSE` | `include_deleted: false` |
+
+**Example config with parameters:**
+```yaml
+parameters:
+  - name: load_date
+    type: date
+    description: "Date to filter source data"
+    required: true
+  - name: business_system_cd
+    type: string
+    description: "Business system code"
+    required: true
+  - name: include_deleted
+    type: boolean
+    description: "Include soft-deleted records"
+    required: false
+    default: false
+
+query:
+  sql: |
+    SELECT "id", "amount", "load_dt"
+    FROM "PROD_DB"."SCHEMA"."TABLE"
+    WHERE "load_dt" = '${load_date}'
+      AND "business_system_cd" = '${business_system_cd}'
+      AND ("is_deleted" = FALSE OR '${include_deleted}' = 'TRUE')
+```
+
+**Passing parameters at runtime:**
+
+| Engine | How to Pass | Example |
+|--------|------------|---------|
+| **Step Function** | `$.parameters` in execution input | `{"parameters": {"load_date": "2026-03-31", "business_system_cd": "JBP"}}` |
+| **Glue** | `--parameters` job argument (JSON string) | `--parameters '{"load_date":"2026-03-31"}'` |
+| **EMR** | `--parameters` CLI argument (JSON string) | `--parameters '{"load_date":"2026-03-31"}'` |
+| **Lambda** | `event["parameters"]` dict | `{"parameters": {"load_date": "2026-03-31"}}` |
+| **ECS** | `--parameters` CLI argument (JSON string) | `--parameters '{"load_date":"2026-03-31"}'` |
+
+**Important notes:**
+- Parameters without defaults are required -- the pipeline fails fast if they are missing
+- Parameters with defaults use the default when not provided at runtime
+- The same substitution is applied to reconciliation `source_expr` so recon queries match the filtered data
+- `${param_name}` placeholders that don't match any declared parameter cause a validation error
 
 ### Engine-Specific Runtime Fields
 

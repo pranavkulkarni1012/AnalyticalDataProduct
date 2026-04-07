@@ -28,12 +28,21 @@ captures the transformation logic described in the ticket.
    - Source tables and their fully-qualified names (database.schema.table)
    - The business logic (joins, filters, aggregations, column mappings) that will become
      the SQL query
+   - **Runtime filter parameters**: Look for filter conditions that use variable values
+     (e.g., "filter by load date", "for a specific business system code", "run for date X").
+     Extract these as parameter definitions with name, type, and description.
+     Common patterns: date filters (load_date, bucket_dt, as_of_date), code filters
+     (business_system_cd, region_cd), ID filters (account_id, customer_id).
+     The column names used in filters may vary across products -- extract the actual
+     column name from the ticket description.
    - Target table details (domain, product name, table name)
    - Data quality expectations (SLAs, thresholds)
    - Schedule requirements (frequency, cron expression)
 5. Draft a `suggested_sql` query using CTEs, joins, and aggregations based on the business
    logic extracted from the Jira description. Use fully-qualified Snowflake table names
    (e.g., `"DATABASE"."SCHEMA"."TABLE"`) and double-quoted identifiers.
+   If runtime filter parameters were identified, use `${param_name}` placeholders in
+   the SQL WHERE clauses (e.g., `WHERE "load_dt" = '${load_date}'`).
 6. If any required field is ambiguous or missing, add it to a `warnings` array and set the
    field to `null` in the output JSON.
 7. Produce a structured JSON output.
@@ -54,7 +63,15 @@ captures the transformation logic described in the ticket.
       "fqn": "DATABASE.SCHEMA.TABLE"
     }
   ],
-  "suggested_sql": "string (draft SQL query with CTEs, joins, aggregations)",
+  "suggested_sql": "string (draft SQL query with CTEs, joins, aggregations, ${param_name} placeholders for runtime filters)",
+  "parameters": [
+    {
+      "name": "string (snake_case, e.g., load_date, business_system_cd)",
+      "type": "string|date|integer|number|boolean",
+      "column_name": "string (actual Snowflake column name used in WHERE clause, e.g., load_dt, bucket_dt)",
+      "description": "string (what this parameter filters)"
+    }
+  ],
   "target": {
     "domain": "string",
     "product_name": "string",

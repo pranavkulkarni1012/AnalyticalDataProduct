@@ -37,6 +37,10 @@ boto3 Lambda invocation for Lambda/ECS).
    queries.
 5. Extract `source.connection.*` for Snowflake source queries (connection
    is nested inside the single `source` object in the config).
+6. Extract `parameters` section (if present) for runtime parameter definitions.
+   The reconciliation module must accept runtime parameters and apply
+   `substitute_parameters()` to each rule's `source_expr` before execution,
+   using the same `parameter_utils.py` module as the main pipeline.
 
 ### Step 2: Determine Execution Context
 
@@ -86,7 +90,8 @@ results = []
 
 #### Function Signature
 ```python
-def run_reconciliation(spark, sf_options, target_table, logger, correlation_id=None):
+def run_reconciliation(spark, sf_options, target_table, logger, correlation_id=None,
+                       runtime_parameters=None, param_definitions=None):
     """
     Runs reconciliation checks comparing source data against target Iceberg table.
 
@@ -97,11 +102,32 @@ def run_reconciliation(spark, sf_options, target_table, logger, correlation_id=N
             (e.g., "glue_catalog.db_name.table_name")
         logger: Logger instance with correlation ID
         correlation_id: Optional correlation ID for tracing
+        runtime_parameters: Optional dict of runtime parameter values
+            (e.g., {"load_date": "2026-03-31", "business_system_cd": "JBP"})
+        param_definitions: Optional list of parameter definitions from config
+            (each has name, type, required, default)
 
     Returns:
         dict with overall_status, run_timestamp, correlation_id, and per-rule results
     """
 ```
+
+Before the rule loop, if `runtime_parameters` and `param_definitions` are provided,
+import and use `substitute_parameters()` from `parameter_utils` to resolve any
+`${param_name}` placeholders in each rule's `source_expr`:
+```python
+from parameter_utils import substitute_parameters
+
+# Before executing each rule's source_expr:
+resolved_source_expr = substitute_parameters(
+    rule["source_expr"], runtime_parameters or {}, param_definitions or []
+)
+```
+Use `resolved_source_expr` instead of `rule["source_expr"]` in all source query executions.
+
+When `param_definitions` is empty or `None` (no `parameters` section in config),
+`substitute_parameters()` returns the SQL unchanged. This makes it safe to call
+unconditionally -- datasets without runtime parameters work identically to before.
 
 #### Rule Processing
 

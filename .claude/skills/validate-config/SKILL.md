@@ -146,6 +146,20 @@ schema = {
         'sla_minutes': {'type': 'integer', 'minimum': 1, 'description': 'SLA for pipeline completion in minutes'}
       }
     },
+    'parameters': {
+      'type': 'array',
+      'items': {
+        'type': 'object', 'required': ['name', 'type'],
+        'additionalProperties': False,
+        'properties': {
+          'name': {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,49}\$'},
+          'type': {'type': 'string', 'enum': ['string', 'date', 'integer', 'number', 'boolean']},
+          'description': {'type': 'string'},
+          'required': {'type': 'boolean', 'default': True},
+          'default': {'type': ['string', 'number', 'boolean', 'null']}
+        }
+      }
+    },
     'runtime': {
       'type': 'object', 'required': ['timeout_minutes'],
       'properties': {
@@ -297,7 +311,17 @@ If `data_quality` section exists:
 3. For `range` type, `parameters` must include `min` and/or `max`.
 4. For `regex` type, `parameters` must include `pattern`.
 
-### Step 11: Runtime Validation
+### Step 11: Parameters Validation (if present)
+
+If `parameters` section exists:
+1. Each parameter has `name` and `type` (required).
+2. `name` matches pattern `^[a-z][a-z0-9_]{0,49}$` (snake_case, 1-50 chars).
+3. `type` is one of: `string`, `date`, `integer`, `number`, `boolean`.
+4. If `required` is `true` (or omitted, defaults to `true`), verify there is either a `default` value or the parameter is expected at runtime.
+5. **Cross-reference with query.sql**: For each declared parameter, check that `${param_name}` appears in `query.sql`. Warn if a declared parameter is not referenced in the SQL.
+6. **Undeclared parameter scan**: Scan `query.sql` for `${...}` placeholders and warn if any placeholder does not have a matching parameter declaration.
+
+### Step 12: Runtime Validation
 
 1. `timeout_minutes` is present and between 1 and 2880 (inclusive).
 2. Engine-specific required fields based on `compute.engine`:
@@ -310,7 +334,7 @@ If `data_quality` section exists:
    - Lambda: `lambda_memory_mb` between 128-10240, `lambda_timeout_seconds` between 1-900.
    - ECS: `ecs_cpu` in (256, 512, 1024, 2048, 4096), `ecs_memory` between 512-30720.
 
-### Step 12: Cross-Section Consistency
+### Step 13: Cross-Section Consistency
 
 1. If `product.schedule` has a `cron` expression, validate it is non-empty.
 2. If `compute.schedule` has a `cron` expression, validate it is non-empty.
@@ -341,6 +365,7 @@ Summary:
   - Target: OK/FAIL
   - Reconciliation: N rules validated, OK/FAIL
   - Data Quality: N checks validated, OK/SKIPPED
+  - Parameters: N parameters validated, OK/SKIPPED (N referenced in SQL)
   - Runtime: OK/FAIL (engine: [engine-name])
   - Cross-section consistency: OK/FAIL
 ========================================

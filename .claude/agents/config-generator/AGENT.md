@@ -135,6 +135,18 @@ query:
     {spec.query.sql}
   description: "{spec.query.description}"
 
+# Runtime parameters (optional) -- filter values passed at execution time
+# SQL uses ${param_name} placeholders; pipeline substitutes at runtime
+parameters:                              # From spec.parameters (if present)
+  - name: load_date
+    type: date
+    description: "Filter date for incremental load"
+    required: true
+  - name: business_system_cd
+    type: string
+    description: "Business system code filter"
+    required: true
+
 target:
   catalog: glue_catalog
   database: "{spec.domain}_{spec.product_name}_{env}"
@@ -153,6 +165,10 @@ data_quality:
 runtime:
   # Engine-specific defaults applied in Step 3
 ```
+
+**Parameters mapping**: If `spec.parameters` exists, map each parameter to the config's
+`parameters` array. Each parameter has `name`, `type`, `description`, `required`, and
+optional `default`. Only include the `parameters` section if the spec defines parameters.
 
 ### Step 3: Apply Domain Defaults
 

@@ -57,11 +57,12 @@ run both validators first.
 
 Generate the following files in `pipelines/generic/ecs/`:
 
-1. `ecs_entrypoint.py` -- Standalone Python entrypoint with argparse (`--config-path`, `--env`)
+1. `ecs_entrypoint.py` -- Standalone Python entrypoint with argparse (`--config-path`, `--env`, `--param_*`)
 2. `snowflake_reader_pandas.py` -- Snowflake DBAPI reader using `cursor.fetch_pandas_all()`
 3. `iceberg_writer_pyiceberg.py` -- PyIceberg writer using Glue Catalog
 4. `reconciliation.py` -- Shared reconciliation logic (Python+Pandas variant)
 5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
+6. `parameter_utils.py` -- Shared parameter substitution module (same as Glue; see `/generate-pipeline` SKILL.md for full specification)
 
 Create the `pipelines/generic/ecs/` directory if it does not exist. If it already
 exists, overwrite with the latest code.
@@ -107,24 +108,30 @@ Read the deployed `ecs_entrypoint.py` and verify it includes:
    downloads the config YAML from S3, and loads source, query, target, and
    reconciliation settings at runtime.
 
-2. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
+2. **Runtime parameter substitution**: If the config has a `parameters` section,
+   reads `--param_{name}` arguments via argparse, merges with defaults from config,
+   and calls `substitute_parameters()` on `query.sql` and reconciliation `source_expr`
+   before execution. Uses `parameter_utils.py` for safe type-validated substitution.
+
+3. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
    with proxy support via `snowflake-connector-python`. Uses `source.connection`
    from the config (single source object).
 
-3. **Query execution**: Executes `query.sql` from the config against Snowflake via
+4. **Query execution**: Executes the resolved `query.sql` from the config against Snowflake via
    the DBAPI cursor. Uses `cursor.fetch_pandas_all()` for the result set.
 
-4. **Iceberg write**: Uses `pyiceberg` catalog to write results to the target table.
+5. **Iceberg write**: Uses `pyiceberg` catalog to write results to the target table.
    Reads AWS region from `os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION"))`.
 
-5. **Reconciliation**: Synchronous invocation of the reconciliation Lambda.
+6. **Reconciliation**: Synchronous invocation of the reconciliation Lambda.
+   Parameter substitution applied to `source_expr` before execution.
    On failure, calls `sys.exit(1)` (not Lambda-style `return`).
 
-6. **Structured logging**: Correlation ID per execution via `logging.LoggerAdapter`.
+7. **Structured logging**: Correlation ID per execution via `logging.LoggerAdapter`.
 
-7. **Error handling**: Top-level try/except in `main()`. Uses `sys.exit(1)` on failure.
+8. **Error handling**: Top-level try/except in `main()`. Uses `sys.exit(1)` on failure.
 
-8. **Connection safety**: Context managers for Snowflake connections.
+9. **Connection safety**: Context managers for Snowflake connections.
 
 If any of these are missing from the template, report a warning.
 
@@ -182,6 +189,7 @@ Next Steps:
   - Generic pipeline is shared -- do not modify per product
   - Product config: [config-file-path]
   - Build and push Docker image to ECR
-  - Run task with --config-path s3://bucket/configs/{product.name}.yaml --env {env}
+  - Run task with --config-path s3://... --env {env} --param_load_date 2026-03-31
+  - Runtime parameter substitution via parameter_utils.py
 ========================================
 ```

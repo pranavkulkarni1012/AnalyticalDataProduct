@@ -109,6 +109,25 @@ All resource names follow the pattern: `adp-{domain}-{product}-{env}[-{suffix}]`
 - **MUST NOT** put transformation logic in pipeline code -- pipeline code is generic and shared.
 - Pipeline code validates SQL does not contain DML/DDL keywords before execution (defense-in-depth).
 
+### Runtime Parameters
+- **MUST** declare runtime parameters in the optional `parameters` section of the config YAML.
+- Each parameter has: `name`, `type` (string/date/integer/number/boolean), `description`, and optional `default`.
+- SQL uses `${param_name}` placeholders (e.g., `WHERE "load_dt" = '${load_date}'`).
+- The generic pipeline substitutes parameter values into SQL at runtime using safe replacement:
+  - String/date values are single-quote escaped (replace `'` with `''`) and wrapped in quotes.
+  - Integer/number values are validated as numeric before substitution (no quotes).
+  - Boolean values are converted to `TRUE`/`FALSE` literals.
+  - **MUST NOT** use Python `str.format()` or f-strings for SQL substitution -- use a dedicated `substitute_parameters()` function.
+- **MUST** validate that all declared parameters without defaults are provided at runtime.
+- **MUST** validate parameter values match their declared types before substitution.
+- Parameter propagation per engine:
+  - Step Function: `$.parameters` object in execution input
+  - Glue: `--param_{name}` job arguments (via `getResolvedOptions`)
+  - EMR: `--param_{name}` argparse arguments
+  - Lambda: `event["parameters"]` dict
+  - ECS: `--param_{name}` argparse arguments
+- Reconciliation source queries also receive parameter substitution (same filter conditions).
+
 ### Reconciliation
 - **MUST** include reconciliation checks in every pipeline (source vs target at minimum).
 - Every pipeline config **MUST** have at least one reconciliation rule.
@@ -183,5 +202,6 @@ is embedded in the `/validate-config` skill. Required top-level sections:
 5. **target** -- Iceberg table on Glue Catalog with S3 path
 6. **reconciliation** -- source-to-target validation rules (mandatory)
 7. **runtime** -- engine-specific settings (workers, memory, timeout)
+8. **parameters** -- (optional) runtime filter parameters with `${param_name}` placeholders in SQL
 
 The generic pipeline reads the config at runtime, connects to Snowflake using `source.connection`, executes `query.sql`, and writes the result to the Iceberg `target`. Two data products requiring different transformations produce two config files but share the same pipeline code.

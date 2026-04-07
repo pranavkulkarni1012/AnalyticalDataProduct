@@ -72,7 +72,23 @@ Define a single source connection object (shared by all source tables referenced
    - **Lambda**: lambda_memory_mb 3008, lambda_timeout_seconds 900, timeout 15 min
    - **ECS**: ecs_cpu 2048, ecs_memory 4096, timeout 240 min
 
-### Step 6: Define Reconciliation Rules
+### Step 6: Define Runtime Parameters
+
+If the requirements JSON includes a `parameters` array:
+1. Map each parameter to the spec's `parameters` section with:
+   - `name`: snake_case parameter name from requirements
+   - `type`: One of `string`, `date`, `integer`, `number`, `boolean`
+   - `description`: Human-readable description of the filter purpose
+   - `required`: `true` (default) -- the parameter must be provided at runtime
+   - `default`: Optional default value (omit if no sensible default)
+2. Verify that each parameter's `${param_name}` placeholder appears in the refined SQL.
+3. If the requirements SQL has hardcoded filter values that should be parameters
+   (e.g., `WHERE "load_dt" = '2026-03-31'`), replace them with `${param_name}`
+   placeholders and add corresponding parameter definitions.
+4. Ensure reconciliation `source_expr` SQL also uses `${param_name}` placeholders
+   for the same filter conditions (so recon checks match the filtered data).
+
+### Step 7: Define Reconciliation Rules
 
 Define reconciliation rules using SQL expressions:
 
@@ -82,7 +98,7 @@ Define reconciliation rules using SQL expressions:
 4. Each rule includes `source_expr` (SQL against Snowflake) and `target_expr` (SQL
    against Iceberg), plus `tolerance_pct`.
 
-### Step 7: Produce Technical Spec JSON
+### Step 8: Produce Technical Spec JSON
 
 Write `02-spec.json` with the following structure:
 
@@ -102,9 +118,18 @@ Write `02-spec.json` with the following structure:
     }
   },
   "query": {
-    "sql": "string (production-ready SQL with CTEs, fully-qualified names, double-quoted identifiers)",
+    "sql": "string (production-ready SQL with CTEs, fully-qualified names, double-quoted identifiers, ${param_name} placeholders for runtime filters)",
     "description": "string (human-readable summary of what the query does)"
   },
+  "parameters": [
+    {
+      "name": "string (e.g., load_date)",
+      "type": "string|date|integer|number|boolean",
+      "description": "string",
+      "required": true,
+      "default": "optional default value"
+    }
+  ],
   "target": {
     "catalog": "glue_catalog",
     "database": "string",
@@ -147,7 +172,7 @@ Write `02-spec.json` with the following structure:
 }
 ```
 
-### Step 8: Publish to Confluence
+### Step 9: Publish to Confluence
 1. Call `mcp__atlassian__getAccessibleAtlassianResources` to get the cloud ID.
 2. Call `mcp__atlassian__getConfluenceSpaces` to find the target space (use the product
    domain name to locate the space, e.g., `ADP` or `Analytics`).
@@ -163,7 +188,7 @@ Write `02-spec.json` with the following structure:
 4. Call `mcp__atlassian__createConfluencePage` to create the page. If a page with the
    same title already exists, call `mcp__atlassian__updateConfluencePage` instead.
 
-### Step 9: Comment on Jira Ticket
+### Step 10: Comment on Jira Ticket
 1. Call `mcp__atlassian__addCommentToJiraIssue` with a comment containing:
    - Link to the Confluence spec page
    - Summary of the SQL query (number of CTEs, tables referenced, output columns)

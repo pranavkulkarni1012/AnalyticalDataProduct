@@ -69,10 +69,14 @@ Generate the ASL JSON with the following states:
       "Arguments": {
         "--ENV.$": "$.env",
         "--config-path.$": "$.config_s3_path",
-        "--JOB_NAME": "{job_name}"
+        "--JOB_NAME": "{job_name}",
+        "--parameters.$": "States.JsonToString($.parameters)"
       }
     }
     ```
+    Note: `$.parameters` is passed as a JSON string. The generic pipeline parses it
+    back into a dict and extracts individual `--param_{name}` values. If
+    `$.parameters` is not in the execution input, the pipeline uses config defaults.
   - **EMR Serverless**:
     ```json
     {
@@ -81,7 +85,7 @@ Generate the ASL JSON with the following states:
       "JobDriver": {
         "SparkSubmit": {
           "EntryPoint": "s3://{script_s3_path}/{product.name}_etl.py",
-          "EntryPointArguments.$": "States.Array('--env', $.env, '--config-path', $.config_s3_path, '--job-name', '{job_name}')",
+          "EntryPointArguments.$": "States.Array('--env', $.env, '--config-path', $.config_s3_path, '--job-name', '{job_name}', '--parameters', States.JsonToString($.parameters))",
           "SparkSubmitParameters": "--conf spark.executor.instances=2"
         }
       }
@@ -99,10 +103,13 @@ Generate the ASL JSON with the following states:
       "FunctionName": "{job_name}",
       "Payload": {
         "env.$": "$.env",
-        "config_path.$": "$.config_s3_path"
+        "config_path.$": "$.config_s3_path",
+        "parameters.$": "$.parameters"
       }
     }
     ```
+    Note: `$.parameters` is passed as-is (dict) in the Lambda event payload.
+    The handler reads `event["parameters"]` and passes it to `substitute_parameters()`.
   - **ECS**:
     ```json
     {
@@ -112,7 +119,7 @@ Generate the ASL JSON with the following states:
       "Overrides": {
         "ContainerOverrides": [{
           "Name": "{product.name}-container",
-          "Command.$": "States.Array('python', 'ecs_entrypoint.py', '--env', $.env, '--config-path', $.config_s3_path)",
+          "Command.$": "States.Array('python', 'ecs_entrypoint.py', '--env', $.env, '--config-path', $.config_s3_path, '--parameters', States.JsonToString($.parameters))",
           "Environment": [
             {"Name": "CORRELATION_ID", "Value.$": "$.correlation_id"}
           ]
