@@ -210,7 +210,9 @@ no parameters to validate. This makes it safe to call unconditionally.
 
 The generic Glue pipeline must:
 - Use `GlueContext`, `Job.init()`/`Job.commit()`, and `getResolvedOptions`
-- Take `--config-path` argument (S3 or local path to the YAML config)
+- Take `--config-path` and `--ENV` arguments (S3 or local path to the YAML config)
+- Read `--ENV` argument, defaulting to `DEV` if not provided. Log the environment at startup.
+  The ENV value is set by Terraform when deploying the Glue job (see `/generate-terraform`).
 - Read the config at runtime to determine source connection, query SQL, target table
 - Read runtime parameters from Glue job arguments (prefixed `--param_`) and merge with
   parameter defaults from the config's `parameters` section

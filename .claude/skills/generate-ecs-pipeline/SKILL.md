@@ -22,7 +22,10 @@ This skill is invoked by `/generate-pipeline` when `compute.engine` is `ecs`.
 ## Architecture
 
 - The generic ECS pipeline is a standalone Python script running in a Docker container
-- At runtime, it takes `--config-path` (S3 path) and `--env` as arguments
+- At runtime, it takes `--config-path` (S3 path) and `--env` (DEV|TEST|PROD, defaults to DEV) as arguments
+- It reads `--env`, defaulting to `os.environ.get("ENV", "DEV")` if not provided via CLI.
+  Logs the environment at startup. Terraform sets the `ENV` environment variable on the
+  ECS task definition (see `/generate-terraform`).
 - It downloads the config YAML, executes `query.sql` against Snowflake, writes to Iceberg
 - One generic Docker image serves ALL ECS-based data products
 - The config YAML (with `query.sql`) is the only product-specific artifact

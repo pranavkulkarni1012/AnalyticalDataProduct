@@ -63,7 +63,8 @@ Generate Terraform modules for resources required by all engines:
 
 #### Module: `terraform/modules/reconciliation_lambda/`
 - `main.tf`: `aws_lambda_function` for the reconciliation checker,
-  `aws_lambda_layer_version` if needed, CloudWatch log group
+  `aws_lambda_layer_version` if needed, CloudWatch log group.
+  The Lambda `environment` block must include `ENV = upper(var.environment)`.
 - `variables.tf`: product_name, handler, runtime, memory, timeout, environment, tags
 - `outputs.tf`: function_arn, function_name
 
@@ -85,10 +86,13 @@ Based on `compute.engine`:
 #### Glue: `terraform/modules/glue_job/`
 - `main.tf`:
   - `aws_glue_job` with worker_type, num_workers, glue_version from `runtime.*`
+  - `default_arguments` must include `"--ENV" = upper(var.environment)` so the
+    generic pipeline receives the environment at runtime. Terraform sets this
+    based on the deployment environment (dev -> DEV, prod -> PROD).
   - `aws_s3_object` to upload the generated PySpark script
   - References to extra_py_files and extra_jars from `runtime.*`
 - `variables.tf`: product_name, script_path, worker_type, num_workers,
-  glue_version, extra_py_files, extra_jars, execution_role_arn, tags
+  glue_version, extra_py_files, extra_jars, execution_role_arn, environment, tags
 - `outputs.tf`: glue_job_name, glue_job_arn
 
 #### EMR: `terraform/modules/emr/`
@@ -98,6 +102,9 @@ Based on `compute.engine`:
   - If `runtime.emr_mode` is `"ec2"`: `aws_emr_cluster` with instance types
     from `runtime.*`
   - `aws_s3_object` to upload the PySpark script
+  - Note: ENV is passed to EMR jobs via `--env` argument in the Step Function's
+    `EntryPointArguments`, not as an infrastructure-level setting. No ENV
+    environment variable is needed on the EMR resource itself.
   - Use a `var.emr_mode` variable to conditionally create one or the other
     (use `count = var.emr_mode == "serverless" ? 1 : 0` pattern)
 - `variables.tf`: product_name, emr_release, emr_mode (default "serverless"),
@@ -111,6 +118,15 @@ Based on `compute.engine`:
 #### Lambda: `terraform/modules/etl_lambda/` (ETL Lambda)
 - `main.tf`:
   - `aws_lambda_function` for the ETL handler
+  - `environment` block must include `ENV = upper(var.environment)` so the
+    generic pipeline receives the environment at runtime:
+    ```hcl
+    environment {
+      variables = {
+        ENV = upper(var.environment)
+      }
+    }
+    ```
   - `aws_lambda_layer_version` for dependencies (from requirements.txt)
   - Memory and timeout from `runtime.lambda_memory_mb` and
     `runtime.lambda_timeout_seconds`
@@ -130,7 +146,10 @@ Based on `compute.engine`:
 - `terraform/modules/ecs_task/`:
   - `main.tf`:
     - `aws_ecs_task_definition` with cpu/memory from `runtime.ecs_cpu`
-      and `runtime.ecs_memory`, container definition referencing ECR image
+      and `runtime.ecs_memory`, container definition referencing ECR image.
+      The container definition `environment` must include
+      `{ "name": "ENV", "value": upper(var.environment) }` so the generic
+      pipeline receives the environment at runtime.
     - `aws_ecs_service` if needed (for scheduled tasks, use EventBridge + ECS RunTask)
     - CloudWatch log group for container logs
   - `variables.tf`: product_name, cpu, memory, ecr_repo_url, cluster_arn,

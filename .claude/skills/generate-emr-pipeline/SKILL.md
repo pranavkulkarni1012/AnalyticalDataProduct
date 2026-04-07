@@ -19,7 +19,9 @@ This skill is invoked by `/generate-pipeline` when `compute.engine` is `emr`.
 ## Architecture
 
 - The generic EMR pipeline is a standalone PySpark script using `SparkSession` (no GlueContext)
-- At runtime, it takes `--config-path` (S3 or local path) and `--env` as arguments
+- At runtime, it takes `--config-path` (S3 or local path) and `--env` (DEV|TEST|PROD, defaults to DEV) as arguments
+- It reads `--env`, defaulting to `DEV` if not provided. Logs the environment at startup.
+  The ENV value is set by Terraform when deploying the EMR job (see `/generate-terraform`).
 - It reads the config YAML, executes `query.sql` against Snowflake, writes to Iceberg
 - One generic pipeline serves ALL EMR-based data products
 - The config YAML (with `query.sql`) is the only product-specific artifact

@@ -1,6 +1,6 @@
 # AI SDLC: Analytical Data Product -- Producer Instructions
 
-**Version:** 2.1.0
+**Version:** 2.2.0
 **Last Updated:** 2026-04-07
 
 This document explains how a data product producer can use the AI SDLC framework to build, deploy, and operate an Analytical Data Product pipeline on AWS. It covers what to clone, what inputs to provide, how to interact with Claude Code, and what outputs to expect at each stage.
@@ -486,6 +486,32 @@ query:
 - Parameters with defaults use the default when not provided at runtime
 - The same substitution is applied to reconciliation `source_expr` so recon queries match the filtered data
 - `${param_name}` placeholders that don't match any declared parameter cause a validation error
+
+### Environment (ENV)
+
+Every pipeline accepts an `ENV` argument indicating the deployment environment (`DEV`, `TEST`, or `PROD`). This value defaults to `DEV` when running locally so pipelines are safe to test without additional configuration.
+
+**How ENV is set:**
+
+| Context | How ENV Is Set |
+|---------|---------------|
+| **Local / manual run** | Defaults to `DEV` (no action needed) |
+| **Terraform deployment** | Terraform sets `ENV` on the compute resource based on the target environment |
+| **Step Function execution** | Pass `"env": "DEV"` in the execution input (`$.env`) |
+
+**Per-engine propagation:**
+
+| Engine | How ENV Reaches the Pipeline |
+|--------|------------------------------|
+| **Glue** | `--ENV` job argument (set in `default_arguments` by Terraform) |
+| **EMR** | `--env` CLI argument (passed via Step Function `EntryPointArguments`) |
+| **Lambda** | `ENV` environment variable (set by Terraform) or `event["env"]` |
+| **ECS** | `ENV` environment variable (set by Terraform on task definition) or `--env` CLI argument |
+
+**Important notes:**
+- The pipeline code always defaults to `DEV` when ENV is not provided
+- Terraform automatically sets ENV to match the deployment environment (`upper(var.environment)`)
+- ENV is used by the pipeline to determine environment-specific behavior (proxy settings, Snowflake database/warehouse, etc.)
 
 ### Engine-Specific Runtime Fields
 
