@@ -62,6 +62,7 @@ Generate the following files in `pipelines/generic/lambda/`:
 3. `iceberg_writer_pyiceberg.py` -- PyIceberg writer using Glue Catalog
 4. `reconciliation.py` -- Shared reconciliation logic (Python+Pandas variant)
 5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
+6. `parameter_utils.py` -- Shared parameter substitution module (same as Glue; see `/generate-pipeline` SKILL.md for full specification)
 
 Create the `pipelines/generic/lambda/` directory if it does not exist. If it already
 exists, overwrite with the latest code.
@@ -89,24 +90,30 @@ Read the deployed `lambda_handler.py` and verify it includes:
    payload, downloads the config YAML from S3, and loads source, query, target, and
    reconciliation settings at runtime.
 
-2. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
+2. **Runtime parameter substitution**: If the config has a `parameters` section,
+   reads `event["parameters"]` dict, merges with defaults from config, and calls
+   `substitute_parameters()` on `query.sql` and reconciliation `source_expr` before
+   execution. Uses `parameter_utils.py` for safe type-validated substitution.
+
+3. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
    with proxy support via `snowflake-connector-python`. Uses `source.connection`
    from the config (single source object).
 
-3. **Query execution**: Executes `query.sql` from the config against Snowflake via
+4. **Query execution**: Executes the resolved `query.sql` from the config against Snowflake via
    the DBAPI cursor. Uses `cursor.fetch_pandas_all()` for the result set.
 
-4. **Iceberg write**: Uses `pyiceberg` catalog to write results to the target table.
+5. **Iceberg write**: Uses `pyiceberg` catalog to write results to the target table.
 
-5. **Reconciliation**: Synchronous invocation of the reconciliation Lambda.
+6. **Reconciliation**: Synchronous invocation of the reconciliation Lambda.
+   Parameter substitution applied to `source_expr` before execution.
 
-6. **Structured logging**: Correlation ID per invocation via `logging.LoggerAdapter`.
+7. **Structured logging**: Correlation ID per invocation via `logging.LoggerAdapter`.
    Formatter: `%(asctime)s | %(levelname)s | %(correlation_id)s | %(message)s`.
 
-7. **Error handling**: Top-level try/except in handler. Return structured JSON
+8. **Error handling**: Top-level try/except in handler. Return structured JSON
    response with statusCode 200 (success) or 500 (failure).
 
-8. **Connection safety**: Context managers for Snowflake connections.
+9. **Connection safety**: Context managers for Snowflake connections.
 
 If any of these are missing from the template, report a warning.
 
@@ -163,6 +170,7 @@ Next Steps:
   - Generic pipeline is shared -- do not modify per product
   - Product config: [config-file-path]
   - Package as Lambda deployment (zip or container)
-  - Invoke with {"config_path": "s3://bucket/configs/{product.name}.yaml", "env": "{env}"}
+  - Invoke with {"config_path": "s3://...", "env": "{env}", "parameters": {"load_date": "2026-03-31"}}
+  - Runtime parameter substitution via parameter_utils.py
 ========================================
 ```

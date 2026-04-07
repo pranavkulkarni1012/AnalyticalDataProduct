@@ -58,6 +58,7 @@ Generate the following files in `pipelines/generic/emr/`:
 3. `iceberg_writer_spark.py` -- Iceberg writer using Spark `df.writeTo()`
 4. `reconciliation.py` -- Shared reconciliation logic (PySpark variant)
 5. `data_quality.py` -- Shared data quality checks (duck-typed for Spark/Pandas)
+6. `parameter_utils.py` -- Shared parameter substitution module (same as Glue; see `/generate-pipeline` SKILL.md for full specification)
 
 Create the `pipelines/generic/emr/` directory if it does not exist. If it already
 exists, overwrite with the latest code.
@@ -76,19 +77,25 @@ Read the deployed `emr_job_boilerplate.py` and verify it includes:
 3. **Source reading**: Connects to Snowflake using OAuth (token from Secrets Manager)
    with proxy support. Uses `source.connection` from the config (single source object).
 
-4. **Query execution**: Executes `query.sql` from the config against Snowflake via
+4. **Runtime parameter substitution**: If the config has a `parameters` section,
+   reads `--param_{name}` arguments via argparse, merges with defaults from config,
+   and calls `substitute_parameters()` on `query.sql` and reconciliation `source_expr`
+   before execution. Uses `parameter_utils.py` for safe type-validated substitution.
+
+5. **Query execution**: Executes the resolved `query.sql` from the config against Snowflake via
    the Spark Snowflake connector. The SQL must be a SELECT/WITH statement.
 
-5. **Iceberg write**: Writes results to `{target.catalog}.{target.database}.{target.table}`
+6. **Iceberg write**: Writes results to `{target.catalog}.{target.database}.{target.table}`
    using `df.writeTo()` with the configured `write_mode`.
 
-6. **Reconciliation**: Inline checks using Snowflake Spark connector for source
-   queries and `spark.sql()` for target queries.
+7. **Reconciliation**: Inline checks using Snowflake Spark connector for source
+   queries and `spark.sql()` for target queries. Parameter substitution applied
+   to `source_expr` before execution.
 
-7. **Structured logging**: Correlation ID, log format
+8. **Structured logging**: Correlation ID, log format
    `%(asctime)s | %(levelname)s | {correlation_id} | %(message)s`.
 
-8. **Error handling**: Top-level try/except/finally. The finally block calls
+9. **Error handling**: Top-level try/except/finally. The finally block calls
    `spark.stop()` guarded with `if spark:`.
 
 If any of these are missing from the template, report a warning.
@@ -136,8 +143,9 @@ Runtime Behavior:
 
 Key Properties:
   - SparkSession (no GlueContext)
-  - argparse with --config-path and --env
+  - argparse with --config-path, --env, and --param_* for runtime parameters
   - if __name__ == "__main__" entry point
+  - Runtime parameter substitution via parameter_utils.py
   - spark.stop() in finally block
   - Config-driven: no per-product code generation
 
