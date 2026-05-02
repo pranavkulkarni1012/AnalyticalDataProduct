@@ -209,6 +209,7 @@
   <a href="#skills">Skills</a>
   <a href="#engines">Engines</a>
   <a href="#constraints">Constraints</a>
+  <a href="#runtime">Runtime</a>
   <a href="#outputs">Outputs</a>
 </nav>
 
@@ -223,7 +224,7 @@
     <div class="stat"><div class="num">6</div><div class="label">Agents</div></div>
     <div class="stat"><div class="num">10</div><div class="label">Skills</div></div>
     <div class="stat"><div class="num">4</div><div class="label">Compute Engines</div></div>
-    <div class="stat"><div class="num">7</div><div class="label">Config Sections</div></div>
+    <div class="stat"><div class="num">8</div><div class="label">Config Sections</div></div>
     <div class="stat"><div class="num">1</div><div class="label">Orchestrator</div></div>
   </div>
 </section>
@@ -419,7 +420,7 @@
     </div>
     <p><strong>Role:</strong> Transforms the technical spec into a validated pipeline config YAML with engine-specific defaults and auto-fix retries.</p>
     <ul>
-      <li>Maps spec into YAML with 7 required sections (product, compute, source, query, target, reconciliation, runtime)</li>
+      <li>Maps spec into YAML with 7 required sections + optional parameters section (product, compute, source, query, target, reconciliation, runtime, parameters)</li>
       <li>Applies engine-specific defaults (Glue: G.2X/10 workers; Lambda: 3008 MB; ECS: 2048 CPU; EMR: serverless)</li>
       <li>Validates against embedded JSON Schema via <code>/validate-config</code> skill (up to 3 auto-fix attempts)</li>
       <li>Validates Snowflake connection via <code>/validate-connection</code> skill</li>
@@ -658,6 +659,7 @@
         <li><code>iceberg_writer_spark.py</code> &mdash; <code>df.writeTo()</code></li>
         <li><code>reconciliation.py</code> &mdash; PySpark variant</li>
         <li><code>data_quality.py</code> &mdash; duck-typed checks</li>
+        <li><code>parameter_utils.py</code> &mdash; safe SQL parameter substitution</li>
       </ul>
     </div>
     <div class="card">
@@ -668,6 +670,7 @@
         <li><code>iceberg_writer_pyiceberg.py</code> &mdash; PyIceberg + Glue Catalog</li>
         <li><code>reconciliation.py</code> &mdash; Pandas variant</li>
         <li><code>data_quality.py</code> &mdash; duck-typed checks</li>
+        <li><code>parameter_utils.py</code> &mdash; safe SQL parameter substitution</li>
         <li><code>Dockerfile</code> + <code>requirements.txt</code> (ECS only)</li>
       </ul>
     </div>
@@ -734,7 +737,63 @@
   </table>
 </section>
 
-<!-- ==================== SLIDE 8: OUTPUTS ==================== -->
+<!-- ==================== SLIDE 8: RUNTIME FEATURES ==================== -->
+<section id="runtime">
+  <h2>Runtime Features</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem;">
+    Two runtime features make pipelines dynamic and environment-aware without changing pipeline code.
+  </p>
+
+  <div class="grid-2">
+    <div class="card" style="border-left: 3px solid var(--warn);">
+      <h4>Runtime Parameters</h4>
+      <p>Pass dynamic filter values (dates, codes, flags) at execution time. SQL uses <code>${param_name}</code> placeholders
+        that get safely substituted with type-validated, SQL-escaped values.</p>
+      <ul>
+        <li><strong>Types:</strong> string, date, integer, number, boolean</li>
+        <li><strong>Safety:</strong> Type validation + SQL escaping (no <code>str.format()</code>)</li>
+        <li><strong>Optional:</strong> Datasets without parameters work unchanged (safe no-op)</li>
+        <li><strong>Recon:</strong> Same substitution applied to reconciliation <code>source_expr</code></li>
+      </ul>
+      <div style="margin-top:0.75rem; background:rgba(0,0,0,0.2); border-radius:8px; padding:0.75rem 1rem; font-size:0.82rem;">
+        <div style="font-weight:700; color:var(--warn); font-size:0.7rem; text-transform:uppercase; margin-bottom:0.3rem;">Example SQL</div>
+        <code style="color:var(--muted);">WHERE "load_dt" = '${load_date}' AND "business_system_cd" = '${business_system_cd}'</code>
+      </div>
+    </div>
+    <div class="card" style="border-left: 3px solid var(--success);">
+      <h4>Environment (ENV)</h4>
+      <p>Every pipeline accepts an <code>ENV</code> argument (<code>DEV</code>, <code>TEST</code>, <code>PROD</code>).
+        Defaults to <code>DEV</code> locally. Terraform sets it automatically on each compute resource.</p>
+      <table style="margin-top:0.75rem; font-size:0.82rem;">
+        <thead>
+          <tr><th>Engine</th><th>How ENV is Set</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Glue</td><td><code>--ENV</code> in default_arguments</td></tr>
+          <tr><td>EMR</td><td><code>--env</code> via Step Function args</td></tr>
+          <tr><td>Lambda</td><td><code>ENV</code> environment variable</td></tr>
+          <tr><td>ECS</td><td><code>ENV</code> in container environment</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3>Parameter Propagation Per Engine</h3>
+  <table>
+    <thead>
+      <tr><th>Engine</th><th>Parameters</th><th>ENV</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Step Function</td><td><code>$.parameters</code> (dict in execution input)</td><td><code>$.env</code> (defaults to <code>dev</code>)</td></tr>
+      <tr><td>Glue</td><td><code>--parameters</code> (JSON string via getResolvedOptions)</td><td><code>--ENV</code> (job argument)</td></tr>
+      <tr><td>EMR</td><td><code>--parameters</code> (JSON string via argparse)</td><td><code>--env</code> (argparse argument)</td></tr>
+      <tr><td>Lambda</td><td><code>event["parameters"]</code> (native dict)</td><td><code>event["env"]</code> or <code>ENV</code> env var</td></tr>
+      <tr><td>ECS</td><td><code>--parameters</code> (JSON string via argparse)</td><td><code>--env</code> or <code>ENV</code> env var</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================== SLIDE 9: OUTPUTS ==================== -->
 <section id="outputs">
   <h2>Generated Outputs</h2>
   <p style="color:var(--muted); margin-bottom:1.5rem;">
